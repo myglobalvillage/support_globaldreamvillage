@@ -16,6 +16,25 @@ npm run build          # typecheck + production build
 npm start              # serves dist and proxies /api to VITE_BACKEND_TARGET
 ```
 Deployed on Railway (`railway.json`). Set `VITE_BACKEND_TARGET` as a service variable.
+`VITE_BACKEND_TARGET` must be the backend **origin only** (no `/api` suffix), e.g. `https://backend-production-18db.up.railway.app`.
+
+## Features
+- Queue: filters, search, sorting, pagination (25/page), bulk assign/status/priority, saved views
+- New-ticket alerts (sound, toast, desktop notification) and unassigned count in the tab title
+- Editable canned replies with `{{customer}}`, `{{agent}}`, `{{ticket}}` variables (stored in the browser)
+- Customer panel, booking context, refund approval flow, activity log
+- Status workflow rules (closed tickets can only be reopened; confirmation when resolving/closing)
+- Collision warning when another agent replies while you are typing
+
+## Keyboard shortcuts
+`j`/`k` next/previous ticket · `r` reply · `n` new ticket · `/` search · `Esc` close · `Ctrl+Enter` send · `?` help
+
+## Dev scripts
+```bash
+npm test       # unit tests (vitest)
+npm run lint   # eslint
+npm run format # prettier
+```
 
 ## Backend dependency
 Uses these backend endpoints: `POST /api/auth/login` and `/api/support/*`

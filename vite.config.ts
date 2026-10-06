@@ -12,6 +12,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     plugins: [react()],
+    test: { environment: 'jsdom', include: ['src/**/*.test.ts'] },
     server: { host: '0.0.0.0', port: 3100, proxy },
     preview: {
       allowedHosts: true,
