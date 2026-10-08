@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { api, AuthError, CATEGORY_LABELS, STATUS_LABELS, slaState } from '../api'
+import { api, AuthError, CATEGORY_LABELS, CHANNEL_LABELS, STATUS_LABELS, slaState } from '../api'
 import { useShortcuts } from '../hooks/useShortcuts'
 import { beep, desktopNotify, requestNotifyPermission } from '../lib/alerts'
 import { paginate, SORT_LABELS, sortTickets, type SortKey } from '../lib/queue'
 import { loadViews, saveViews, type SavedView } from '../lib/views'
 import { isAllowedTransition } from '../lib/workflow'
 import type { Me, QueueFilter, Ticket, View } from '../types'
+import { Analytics } from './Analytics'
 import { NewTicketModal } from './NewTicketModal'
 import { Team } from './Team'
 import { useToast } from './Toast'
@@ -50,7 +51,14 @@ export function Shell({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const [views, setViews] = useState<SavedView[]>(loadViews)
   const [bulkBusy, setBulkBusy] = useState(false)
   const known = useRef<{ key: string; ids: Set<string> } | null>(null)
-  const isAdmin = me.role === 'admin' || me.role === 'support_admin'
+  const isAdmin = me.role === 'admin'
+  const canApproveRefunds = me.role === 'admin' || me.role === 'support_admin'
+
+  useEffect(() => {
+    if (!isAdmin && (view === 'analytics' || view === 'team')) {
+      setView('queue')
+    }
+  }, [isAdmin, view])
 
   useEffect(() => { requestNotifyPermission() }, [])
 
@@ -151,6 +159,7 @@ export function Shell({ me, onLogout }: { me: Me; onLogout: () => void }) {
         <div className="logo"><span className="brand-mark sm">GDV</span> Support Console</div>
         <nav>
           <button className={view === 'queue' ? 'tab active' : 'tab'} onClick={() => setView('queue')}>Queue</button>
+          {isAdmin && <button className={view === 'analytics' ? 'tab active' : 'tab'} onClick={() => setView('analytics')}>Analytics</button>}
           {isAdmin && <button className={view === 'team' ? 'tab active' : 'tab'} onClick={() => setView('team')}>Team</button>}
         </nav>
         <div className="who">
@@ -160,7 +169,21 @@ export function Shell({ me, onLogout }: { me: Me; onLogout: () => void }) {
         </div>
       </header>
 
-      {view === 'team' ? <Team me={me} /> : (
+      {view === 'analytics' && isAdmin ? (
+        <Analytics
+          me={me}
+          onDrillDown={params => {
+            setView('queue')
+            if (params.category) {
+              setFilter({ id: `cat-${params.category}`, label: `Category: ${params.category}`, params: { category: params.category } })
+            } else if (params.status) {
+              setFilter({ id: `st-${params.status}`, label: `Status: ${params.status}`, params: { status: params.status } })
+            } else if (params.priority) {
+              setFilter({ id: `p-${params.priority}`, label: `Priority: ${params.priority}`, params: { priority: params.priority } })
+            }
+          }}
+        />
+      ) : view === 'team' && isAdmin ? <Team me={me} /> : (
         <>
           {stats && (
             <section className="stats">
@@ -234,7 +257,7 @@ export function Shell({ me, onLogout }: { me: Me; onLogout: () => void }) {
                         </div>
                         <div className="row-bottom indent">
                           <span className={`status s-${t.status}`}>{STATUS_LABELS[t.status]}</span>
-                          <span className="muted small">{t.channel === 'guest_web' ? 'web (guest)' : t.channel}</span>
+                          <span className="muted small">{CHANNEL_LABELS[t.channel || ''] || t.channel || '—'}</span>
                           <span className={`sla ${sla.tone}`}>{sla.label}</span>
                           {t.refundStatus === 'requested' && <span className="pill p-high">refund?</span>}
                         </div>
@@ -251,7 +274,7 @@ export function Shell({ me, onLogout }: { me: Me; onLogout: () => void }) {
             </aside>
             <section className={selected ? 'work' : 'work hide-mobile'}>
               {selected
-                ? <Workspace key={selected} id={selected} me={me} isAdmin={isAdmin} onChanged={load} onClose={() => setSelected(null)} onFilterCustomer={filterCustomer} />
+                ? <Workspace key={selected} id={selected} me={me} isAdmin={canApproveRefunds} onChanged={load} onClose={() => setSelected(null)} onFilterCustomer={filterCustomer} />
                 : <div className="empty big">Select a ticket to start.<div className="muted small">Tip: press <kbd>j</kbd> / <kbd>k</kbd> to move, <kbd>?</kbd> for shortcuts.</div></div>}
             </section>
           </main>

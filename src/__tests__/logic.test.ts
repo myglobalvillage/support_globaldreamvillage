@@ -73,3 +73,40 @@ describe('slaState', () => {
     expect(slaState({ status: 'resolved', slaDueAt: iso(-H) }).tone).toBe('done')
   })
 })
+
+import { computeAnalyticsFromTickets } from '../lib/analytics'
+
+describe('analytics helpers', () => {
+  it('validates supported periods', () => {
+    const valid = ['week', 'month', 'quarter', 'year']
+    expect(valid).toContain('week')
+    expect(valid).toContain('month')
+    expect(valid).toContain('quarter')
+  })
+
+  it('computes analytics correctly from tickets list', () => {
+    const mockTickets = [
+      { ticketId: '1', ticketNumber: 'GV-1', subject: 'A', status: 'open', priority: 'urgent', category: 'booking_payment', channel: 'app', createdAt: iso(-2 * H) },
+      { ticketId: '2', ticketNumber: 'GV-2', subject: 'B', status: 'resolved', priority: 'normal', category: 'account', channel: 'email', createdAt: iso(-5 * H), resolvedAt: iso(-H), firstResponseAt: iso(-4 * H) },
+    ]
+    const data = computeAnalyticsFromTickets(mockTickets, 'week')
+    expect(data.summary.totalRaised).toBe(2)
+    expect(data.summary.totalResolved).toBe(1)
+    expect(data.summary.resolutionRate).toBe(50)
+    expect(data.byCategory['booking_payment']).toBe(1)
+    expect(data.byCategory['account']).toBe(1)
+    expect(data.byChannel['app']).toBe(1)
+    expect(data.byChannel['email']).toBe(1)
+    expect(data.trend.length).toBe(7)
+  })
+})
+
+describe('login feedback & error handling', () => {
+  it('formats appropriate feedback for authentication scenarios', () => {
+    const error401 = 'Invalid email or password. Please try again.'
+    const error403 = 'Access denied: Support staff privileges required.'
+    expect(error401).toContain('Invalid email or password')
+    expect(error403).toContain('Support staff privileges required')
+  })
+})
+

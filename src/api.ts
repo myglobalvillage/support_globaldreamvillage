@@ -21,7 +21,11 @@ async function request(path: string, method = 'GET', body?: unknown): Promise<an
   })
   let data: any = {}
   try { data = await res.json() } catch { /* non-JSON error */ }
-  if (res.status === 401) { clearToken(); throw new AuthError(data.message || 'Session expired. Please sign in again.') }
+  if (res.status === 401) {
+    clearToken()
+    const errorMsg = data.message || data.error || (path.includes('/auth/login') ? 'Invalid email or password. Please try again.' : 'Session expired. Please sign in again.')
+    throw new AuthError(errorMsg)
+  }
   if (!res.ok) throw new Error(data.message || data.error || `Request failed (${res.status})`)
   return data
 }
@@ -44,6 +48,7 @@ export const api = {
     request(`/support/tickets/${id}/refund-request`, 'POST', { amount, reason }),
   decideRefund: (id: string, approve: boolean, note: string) =>
     request(`/support/tickets/${id}/refund-decision`, 'POST', { approve, note }),
+  analytics: (period = 'month') => request(`/support/analytics?period=${encodeURIComponent(period)}`),
 }
 
 export const CATEGORY_LABELS: Record<string, string> = {
@@ -64,6 +69,14 @@ export const STATUS_LABELS: Record<string, string> = {
   waiting_on_customer: 'Waiting on customer',
   resolved: 'Resolved',
   closed: 'Closed',
+}
+
+export const CHANNEL_LABELS: Record<string, string> = {
+  app: 'In-App',
+  email: 'Email',
+  whatsapp: 'WhatsApp',
+  phone: 'Phone',
+  guest_web: 'Web (Guest)',
 }
 
 export const fmt = (iso?: string | null) => {

@@ -15,20 +15,22 @@ export default function App() {
       const res = await api.agents()
       const stored = userId || localStorage.getItem('gdv_support_uid') || ''
       const found = (res.agents || []).find((a: any) => a.userId === stored)
-      if (!found) throw new Error('Could not identify your support profile.')
+      if (!found) throw new Error('Access denied: Could not identify your support staff profile.')
       setMe({ userId: found.userId, name: found.name || fallback?.name || '', email: found.email, role: found.role })
       setAuthError('')
     } catch (e: any) {
       clearToken()
       localStorage.removeItem('gdv_support_uid')
       setMe(null)
-      setAuthError(e instanceof AuthError ? e.message : (e.message || 'Support access required.'))
+      const friendly = e instanceof AuthError ? e.message : (e.message || 'Access denied: Support staff privileges required.')
+      setAuthError(friendly)
+      throw new Error(friendly)
     } finally {
       setBooting(false)
     }
   }, [])
 
-  useEffect(() => { if (getToken()) boot() }, [boot])
+  useEffect(() => { if (getToken()) boot().catch(() => {}) }, [boot])
 
   const logout = useCallback(() => { clearToken(); localStorage.removeItem('gdv_support_uid'); setMe(null) }, [])
 

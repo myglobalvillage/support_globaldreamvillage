@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, CATEGORY_LABELS, STATUS_LABELS, fmt, slaState } from '../api'
+import { api, CATEGORY_LABELS, CHANNEL_LABELS, STATUS_LABELS, fmt, slaState } from '../api'
 import { loadMacros, renderMacro, type Macro } from '../lib/macros'
 import { allowedStatuses, needsConfirm } from '../lib/workflow'
 import type { Me } from '../types'
@@ -90,7 +90,7 @@ export function Workspace({ id, me, isAdmin, onChanged, onClose, onFilterCustome
           <button className="btn ghost sm show-mobile" onClick={onClose}>← Back</button>
           <div>
             <h2>{t.subject}</h2>
-            <div className="muted small">{t.ticketNumber} · {t.customerName} ({t.customerEmail}) · via {t.channel} · {t.customerTicketCount} ticket(s) total</div>
+            <div className="muted small">{t.ticketNumber} · {t.customerName} ({t.customerEmail}) · via {CHANNEL_LABELS[t.channel || ''] || t.channel || '—'} · {t.customerTicketCount} ticket(s) total</div>
           </div>
         </div>
         {err && <div className="alert">{err}</div>}

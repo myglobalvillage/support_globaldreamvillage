@@ -24,6 +24,7 @@ Deployed on Railway (`railway.json`). Set `VITE_BACKEND_TARGET` as a service var
 - Editable canned replies with `{{customer}}`, `{{agent}}`, `{{ticket}}` variables (stored in the browser)
 - Customer panel, booking context, refund approval flow, activity log
 - Status workflow rules (closed tickets can only be reopened; confirmation when resolving/closing)
+- Analytics: Interactive dashboard for admins with Week, Month, Quarter, and Year timeframes, ticket volume trends (raised vs resolved), breakdown by category/channel/priority/status, SLA first-response compliance, and agent performance table
 - Collision warning when another agent replies while you are typing
 
 ## Keyboard shortcuts
