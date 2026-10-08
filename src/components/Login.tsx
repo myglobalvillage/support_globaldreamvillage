@@ -52,9 +52,15 @@ export function Login({ error, onLoggedIn }: { error: string; onLoggedIn: (id: s
   return (
     <div className="login-wrap">
       <form className="login-card" onSubmit={submit}>
-        <div className="brand-mark">GDV</div>
-        <h1>Support Console</h1>
-        <p className="muted">Sign in with your staff account.</p>
+        <div className="login-brand-header">
+          <img
+            src="/brand-logo.png"
+            alt="Global Dream Village Logo"
+            className="login-brand-logo"
+          />
+          <p className="login-motto">where every stay becomes a dream</p>
+          <div className="login-brand-badge">SUPPORT OPERATIONS CENTER</div>
+        </div>
 
         {status === 'success' && (
           <div className="alert success" role="status" aria-live="polite">

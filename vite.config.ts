@@ -5,7 +5,7 @@ import react from '@vitejs/plugin-react'
 // (see .env.example) to the backend origin; /api is proxied to it.
 export default defineConfig(({ mode }) => {
   const env = { ...loadEnv(mode, process.cwd(), ''), ...process.env }
-  const rawTarget = env.VITE_BACKEND_TARGET || 'http://localhost:5000'
+  const rawTarget = env.VITE_BACKEND_TARGET || 'https://backend-production-18db.up.railway.app'
   // Normalize target: strip any trailing /api or slashes so proxy /api doesn't duplicate
   const target = rawTarget.replace(/\/api\/?$/, '').replace(/\/+$/, '')
   const proxy = { '/api': { target, changeOrigin: true, secure: true } }

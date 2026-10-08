@@ -1,6 +1,6 @@
-/** Support console API client. Talks to the same Flask backend as the customer app. */
+import config from './config'
 
-const BASE = (import.meta as any).env?.VITE_API_URL || '/api'
+const BASE = config.apiUrl
 const TOKEN_KEY = 'gdv_support_token'
 
 export const getToken = () => localStorage.getItem(TOKEN_KEY)
@@ -49,6 +49,8 @@ export const api = {
   decideRefund: (id: string, approve: boolean, note: string) =>
     request(`/support/tickets/${id}/refund-decision`, 'POST', { approve, note }),
   analytics: (period = 'month') => request(`/support/analytics?period=${encodeURIComponent(period)}`),
+  mailStatus: () => request('/support/mail/status'),
+  syncMail: (query?: 'UNSEEN' | 'ALL') => request('/support/mail/sync', 'POST', { query }),
 }
 
 export const CATEGORY_LABELS: Record<string, string> = {

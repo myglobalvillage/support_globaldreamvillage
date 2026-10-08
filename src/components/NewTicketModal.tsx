@@ -18,8 +18,13 @@ export function NewTicketModal({ onClose, onCreated }: { onClose: () => void; on
   return (
     <div className="modal-back" onClick={onClose}>
       <form className="modal" onClick={e => e.stopPropagation()} onSubmit={submit}>
-        <h2>Log a ticket for a customer</h2>
-        <p className="muted small">For phone calls, WhatsApp chats and emails you handle outside the app.</p>
+        <div className="modal-header-brand">
+          <img src="/gdv-icon.png" alt="Global Dream Village" className="modal-emblem" />
+          <div>
+            <h2>Log a ticket for a customer</h2>
+            <p className="muted small">Global Dream Village Guest & Host Support Intake</p>
+          </div>
+        </div>
         {err && <div className="alert">{err}</div>}
         <label>Customer email<input autoFocus required type="email" value={form.customerEmail} onChange={e => set('customerEmail', e.target.value)} /></label>
         <div className="grid3">

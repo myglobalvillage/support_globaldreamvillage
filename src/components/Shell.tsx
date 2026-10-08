@@ -50,6 +50,7 @@ export function Shell({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const [showHelp, setShowHelp] = useState(false)
   const [views, setViews] = useState<SavedView[]>(loadViews)
   const [bulkBusy, setBulkBusy] = useState(false)
+  const [syncingMail, setSyncingMail] = useState(false)
   const known = useRef<{ key: string; ids: Set<string> } | null>(null)
   const isAdmin = me.role === 'admin'
   const canApproveRefunds = me.role === 'admin' || me.role === 'support_admin'
@@ -153,10 +154,39 @@ export function Shell({ me, onLogout }: { me: Me; onLogout: () => void }) {
 
   const filterCustomer = (email: string) => { setFilter(FILTERS[0]); setSearch(email); setSelected(null) }
 
+  const handleSyncMail = async (query: 'UNSEEN' | 'ALL' = 'UNSEEN') => {
+    if (syncingMail) return
+    setSyncingMail(true)
+    try {
+      const res = await api.syncMail(query)
+      if (res.success) {
+        toast(
+          res.processed === 0
+            ? 'No new emails found in support inbox'
+            : `Mail sync complete: ${res.newTickets} new ticket(s), ${res.replies} reply(ies)`,
+          'info'
+        )
+        await load()
+      } else {
+        toast(`Mail sync error: ${res.error || 'Failed'}`, 'error')
+      }
+    } catch (e: any) {
+      toast(`Mail sync error: ${e.message}`, 'error')
+    } finally {
+      setSyncingMail(false)
+    }
+  }
+
   return (
     <div className="shell">
       <header className="topbar">
-        <div className="logo"><span className="brand-mark sm">GDV</span> Support Console</div>
+        <div className="logo-lockup" onClick={() => setView('queue')} title="Global Dream Village Support Center">
+          <img src="/gdv-icon.png" alt="Global Dream Village" className="logo-emblem" />
+          <div className="logo-text">
+            <span className="logo-brand">GLOBAL DREAM VILLAGE</span>
+            <span className="logo-service">Support Center</span>
+          </div>
+        </div>
         <nav>
           <button className={view === 'queue' ? 'tab active' : 'tab'} onClick={() => setView('queue')}>Queue</button>
           {isAdmin && <button className={view === 'analytics' ? 'tab active' : 'tab'} onClick={() => setView('analytics')}>Analytics</button>}
@@ -199,6 +229,14 @@ export function Shell({ me, onLogout }: { me: Me; onLogout: () => void }) {
             <aside className={selected ? 'list hide-mobile' : 'list'}>
               <div className="list-head">
                 <input id="queue-search" placeholder="Search ticket #, subject or booking… ( / )" value={search} onChange={e => setSearch(e.target.value)} />
+                <button
+                  className="btn ghost sm"
+                  title="Check support mailbox (Hold Shift to fetch all)"
+                  disabled={syncingMail}
+                  onClick={(e) => handleSyncMail(e.shiftKey ? 'ALL' : 'UNSEEN')}
+                >
+                  {syncingMail ? 'Syncing…' : '↻ Sync Mail'}
+                </button>
                 <button id="new-ticket-btn" className="btn primary sm" onClick={() => setShowNew(true)}>+ Log ticket</button>
               </div>
               <div className="chips">
@@ -275,7 +313,19 @@ export function Shell({ me, onLogout }: { me: Me; onLogout: () => void }) {
             <section className={selected ? 'work' : 'work hide-mobile'}>
               {selected
                 ? <Workspace key={selected} id={selected} me={me} isAdmin={canApproveRefunds} onChanged={load} onClose={() => setSelected(null)} onFilterCustomer={filterCustomer} />
-                : <div className="empty big">Select a ticket to start.<div className="muted small">Tip: press <kbd>j</kbd> / <kbd>k</kbd> to move, <kbd>?</kbd> for shortcuts.</div></div>}
+                : (
+                  <div className="empty-workspace">
+                    <img src="/gdv-icon.png" alt="Global Dream Village" className="empty-workspace-emblem" />
+                    <h3>Global Dream Village Support Desk</h3>
+                    <p>Select a customer ticket from the queue to view details, coordinate responses, and assist guests and hosts.</p>
+                    <div className="empty-tips">
+                      <span><kbd>j</kbd> / <kbd>k</kbd> Navigate</span>
+                      <span><kbd>r</kbd> Reply</span>
+                      <span><kbd>n</kbd> New ticket</span>
+                      <span><kbd>?</kbd> Shortcuts</span>
+                    </div>
+                  </div>
+                )}
             </section>
           </main>
         </>

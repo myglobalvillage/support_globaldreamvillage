@@ -1,0 +1,142 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" width="100%" height="100%">
+  <defs>
+    <!-- Background Squircle Gradient -->
+    <linearGradient id="gdvBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFF5F5" />
+      <stop offset="100%" stop-color="#FFF" />
+    </linearGradient>
+
+    <!-- Sky Gradient: Dreamy Golden Sunrise into Coral -->
+    <linearGradient id="skyGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF6B6B" />
+      <stop offset="45%" stop-color="#FFA07A" />
+      <stop offset="100%" stop-color="#FCD34D" />
+    </linearGradient>
+
+    <!-- Globe Base Ring -->
+    <linearGradient id="globeOrbit" x1="0%" y1="100%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#059669" />
+      <stop offset="50%" stop-color="#10B981" />
+      <stop offset="100%" stop-color="#FF385C" />
+    </linearGradient>
+
+    <!-- Lush Nature Hills Gradients -->
+    <linearGradient id="hillFar" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#10B981" />
+      <stop offset="100%" stop-color="#047857" />
+    </linearGradient>
+
+    <linearGradient id="hillNear" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#34D399" />
+      <stop offset="50%" stop-color="#10B981" />
+      <stop offset="100%" stop-color="#065F46" />
+    </linearGradient>
+
+    <!-- Winding Travel Path Gradient -->
+    <linearGradient id="travelPath" x1="50%" y1="100%" x2="50%" y2="0%">
+      <stop offset="0%" stop-color="#F59E0B" />
+      <stop offset="50%" stop-color="#FDE68A" />
+      <stop offset="100%" stop-color="#FFFFFF" />
+    </linearGradient>
+
+    <!-- Villa Roof Gradient (Signature Coral) -->
+    <linearGradient id="roofGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FF385C" />
+      <stop offset="100%" stop-color="#E11D48" />
+    </linearGradient>
+
+    <!-- Dream Star Glow -->
+    <linearGradient id="starGlow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFBEB" />
+      <stop offset="50%" stop-color="#FDE047" />
+      <stop offset="100%" stop-color="#F59E0B" />
+    </linearGradient>
+
+    <filter id="softGlow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="2" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+
+  <!-- Globe Outer Ring Frame / Planet Horizon -->
+  <circle cx="60" cy="60" r="54" fill="url(#gdvBg)" stroke="#E5E7EB" stroke-width="1.5" />
+  
+  <!-- Clipping Mask for Inside the Globe Circle -->
+  <clipPath id="globeClip">
+    <circle cx="60" cy="60" r="52" />
+  </clipPath>
+
+  <g clip-path="url(#globeClip)">
+    <!-- Dreamy Dawn Sky inside Globe -->
+    <rect x="8" y="8" width="104" height="66" fill="url(#skyGrad)" opacity="0.88" />
+
+    <!-- Rising Morning Sun -->
+    <circle cx="60" cy="40" r="16" fill="#FEF08A" opacity="0.8" filter="url(#softGlow)" />
+
+    <!-- Distant Mountain Silhouettes -->
+    <path d="M12 68 L36 48 L56 65 L76 46 L108 72 L108 80 L12 80 Z" fill="#047857" opacity="0.45" />
+
+    <!-- Lush Rolling Green Hill Background -->
+    <path d="M4 74 Q 35 48, 70 64 T 116 68 L 116 116 L 4 116 Z" fill="url(#hillFar)" />
+
+    <!-- Foreground Terraced Greenery / Lush Village Landscape -->
+    <path d="M4 86 Q 45 66, 85 80 T 116 88 L 116 116 L 4 116 Z" fill="url(#hillNear)" />
+
+    <!-- Tropical Palm Trees & Greenery Framing (Left) -->
+    <!-- Palm Trunk -->
+    <path d="M26 84 Q 28 66, 24 54" stroke="#92400E" stroke-width="2.5" stroke-linecap="round" fill="none" />
+    <!-- Palm Fronds -->
+    <path d="M24 54 Q 14 48, 12 56 M 24 54 Q 18 42, 26 38 M 24 54 Q 34 44, 38 52 M 24 54 Q 20 60, 16 64" stroke="#059669" stroke-width="2.2" stroke-linecap="round" fill="none" />
+
+    <!-- Tropical Palm Tree (Right) -->
+    <path d="M96 86 Q 93 70, 97 58" stroke="#92400E" stroke-width="2.2" stroke-linecap="round" fill="none" />
+    <path d="M97 58 Q 88 52, 86 60 M 97 58 Q 93 46, 100 42 M 97 58 Q 106 50, 108 58" stroke="#059669" stroke-width="2" stroke-linecap="round" fill="none" />
+
+    <!-- Cozy Dream Village Cottage / Villa -->
+    <!-- Villa Main Walls -->
+    <rect x="49" y="58" width="22" height="18" rx="2" fill="#FFFFFF" />
+    
+    <!-- Villa Coral Roof -->
+    <path d="M46 59 L60 46 L74 59 Z" fill="url(#roofGrad)" />
+    <!-- Cozy Chimney -->
+    <rect x="65" y="47" width="3.5" height="6" fill="#BE123C" rx="0.5" />
+    
+    <!-- Glowing Arched Doorway (Welcoming Haven) -->
+    <path d="M57 76 L57 69 Q 60 66, 63 69 L 63 76 Z" fill="#F59E0B" />
+    <!-- Warm Little Windows -->
+    <rect x="52" y="63" width="3.5" height="4" rx="0.8" fill="#FEF3C7" />
+    <rect x="64.5" y="63" width="3.5" height="4" rx="0.8" fill="#FEF3C7" />
+
+    <!-- Winding Journey Pathway: Showing Travel to the Village -->
+    <!-- The scenic golden road curving from the viewer into the village door -->
+    <path d="M 60 76 Q 60 84, 52 90 T 60 102 T 48 116 L 72 116 Q 68 104, 68 96 T 60 76 Z" fill="url(#travelPath)" opacity="0.95" />
+
+    <!-- Travel Motion Dots along the path -->
+    <circle cx="56" cy="110" r="1.5" fill="#D97706" />
+    <circle cx="60" cy="98" r="1.3" fill="#D97706" />
+    <circle cx="56" cy="88" r="1.1" fill="#D97706" />
+  </g>
+
+  <!-- Globe Latitude / Equator Compass Arc (Global travel motif) -->
+  <path d="M 10 66 Q 60 92, 110 66" stroke="url(#globeOrbit)" stroke-width="3" stroke-linecap="round" fill="none" />
+  
+  <!-- Dynamic Flight / Travel Swoop with Airplane / Waypoint Icon -->
+  <path d="M 16 78 Q 45 40, 84 26" stroke="#FFFFFF" stroke-width="2.5" stroke-dasharray="3 3" stroke-linecap="round" fill="none" opacity="0.9" />
+  
+  <!-- Tiny Traveling Bird / Airplane heading towards the Dream Village -->
+  <path d="M 84 26 L 88 23 L 86 28 L 90 28 L 86 30 L 85 33 L 83 29 Z" fill="#FF385C" />
+
+  <!-- Radiant Dream Star (Guiding Light of Global Dream Village) -->
+  <g transform="translate(60, 36)" filter="url(#softGlow)">
+    <path d="M0 -9 Q 0 0, 9 0 Q 0 0, 0 9 Q 0 0, -9 0 Q 0 0, 0 -9 Z" fill="url(#starGlow)" />
+    <circle cx="0" cy="0" r="2" fill="#FFFFFF" />
+  </g>
+
+  <!-- Secondary Sparkle Stars in the Dream Sky -->
+  <g transform="translate(38, 30)">
+    <path d="M0 -4 Q 0 0, 4 0 Q 0 0, 0 4 Q 0 0, -4 0 Q 0 0, 0 -4 Z" fill="#FEF08A" opacity="0.9" />
+  </g>
+  <g transform="translate(80, 42)">
+    <path d="M0 -3.5 Q 0 0, 3.5 0 Q 0 0, 0 3.5 Q 0 0, -3.5 0 Q 0 0, 0 -3.5 Z" fill="#FEF08A" opacity="0.8" />
+  </g>
+</svg>
