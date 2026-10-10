@@ -154,24 +154,29 @@ export function Shell({ me, onLogout }: { me: Me; onLogout: () => void }) {
 
   const filterCustomer = (email: string) => { setFilter(FILTERS[0]); setSearch(email); setSelected(null) }
 
-  const handleSyncMail = async (query: 'UNSEEN' | 'ALL' = 'UNSEEN') => {
+  const [lastSyncTime, setLastSyncTime] = useState<string | null>(null)
+
+  const handleRefreshAndPullMail = async () => {
     if (syncingMail) return
     setSyncingMail(true)
     try {
-      const res = await api.syncMail(query)
-      if (res.success) {
-        toast(
-          res.processed === 0
-            ? 'No new emails found in support inbox'
-            : `Mail sync complete: ${res.newTickets} new ticket(s), ${res.replies} reply(ies)`,
-          'info'
-        )
-        await load()
+      const mailRes = await api.syncMail('ALL').catch((e: any) => ({ success: false, error: e.message }))
+      await load()
+      setLastSyncTime(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }))
+
+      if (mailRes?.success) {
+        if (mailRes.newTickets > 0 || mailRes.replies > 0) {
+          toast(`Mail pulled: ${mailRes.newTickets} new ticket(s), ${mailRes.replies} reply(ies)`, 'success')
+        } else {
+          toast('Inbox checked: all emails up to date.', 'info')
+        }
+      } else if (mailRes?.error) {
+        toast(`Mail pull notice: ${mailRes.error}`, 'error')
       } else {
-        toast(`Mail sync error: ${res.error || 'Failed'}`, 'error')
+        toast('Queue refreshed.', 'info')
       }
     } catch (e: any) {
-      toast(`Mail sync error: ${e.message}`, 'error')
+      toast(`Refresh error: ${e.message}`, 'error')
     } finally {
       setSyncingMail(false)
     }
@@ -193,6 +198,17 @@ export function Shell({ me, onLogout }: { me: Me; onLogout: () => void }) {
           {isAdmin && <button className={view === 'team' ? 'tab active' : 'tab'} onClick={() => setView('team')}>Team</button>}
         </nav>
         <div className="who">
+          <button
+            id="topbar-refresh-btn"
+            className="btn ghost sm refresh-pill"
+            title="Check support@globaldreamvillage.com inbox & refresh ticket queue"
+            disabled={syncingMail}
+            onClick={handleRefreshAndPullMail}
+          >
+            <span className={`refresh-glyph ${syncingMail ? 'spin' : ''}`} style={{ display: 'inline-block', fontSize: '14px', marginRight: '4px' }}>↻</span>
+            <span>{syncingMail ? 'Pulling Mail…' : 'Refresh Mail'}</span>
+            {lastSyncTime && <span className="sync-badge">{lastSyncTime}</span>}
+          </button>
           <button className="btn ghost sm" title="Keyboard shortcuts" onClick={() => setShowHelp(true)}>⌨ ?</button>
           <span>{me.name} <em>{me.role.replace('_', ' ')}</em></span>
           <button className="btn ghost" onClick={onLogout}>Sign out</button>
@@ -230,12 +246,14 @@ export function Shell({ me, onLogout }: { me: Me; onLogout: () => void }) {
               <div className="list-head">
                 <input id="queue-search" placeholder="Search ticket #, subject or booking… ( / )" value={search} onChange={e => setSearch(e.target.value)} />
                 <button
+                  id="queue-refresh-btn"
                   className="btn ghost sm"
-                  title="Check support mailbox (support@globaldreamvillage.com)"
+                  title="Check support mailbox (support@globaldreamvillage.com) & refresh queue"
                   disabled={syncingMail}
-                  onClick={() => handleSyncMail('ALL')}
+                  onClick={handleRefreshAndPullMail}
                 >
-                  {syncingMail ? 'Syncing…' : '↻ Sync Mail'}
+                  <span className={`refresh-glyph ${syncingMail ? 'spin' : ''}`} style={{ display: 'inline-block', marginRight: '4px' }}>↻</span>
+                  {syncingMail ? 'Pulling…' : 'Refresh Mail'}
                 </button>
                 <button id="new-ticket-btn" className="btn primary sm" onClick={() => setShowNew(true)}>+ Log ticket</button>
               </div>

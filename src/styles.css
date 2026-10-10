@@ -350,3 +350,44 @@ code { background: #f1f5f9; padding: 1px 5px; border-radius: 4px; }
 .analytics-table td { padding: 12px; border-bottom: 1px solid #f1f5f9; }
 .role-tag { font-size: 10.5px; text-transform: uppercase; font-weight: 700; background: #f1f5f9; padding: 2px 7px; border-radius: 6px; color: var(--muted); }
 .badge-resolved { font-weight: 700; color: #15803d; background: #dcfce7; padding: 2px 8px; border-radius: 6px; }
+
+/* Refresh & Mail Pull UI */
+.refresh-glyph.spin {
+  display: inline-block;
+  animation: spin 0.8s linear infinite;
+}
+
+.refresh-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 20px;
+  padding: 4px 10px;
+  color: #e2e8f0;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.refresh-pill:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.3);
+  transform: translateY(-1px);
+}
+
+.refresh-pill:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.sync-badge {
+  font-size: 10.5px;
+  background: rgba(255, 255, 255, 0.18);
+  padding: 1px 6px;
+  border-radius: 10px;
+  color: #93c5fd;
+  font-family: ui-monospace, monospace;
+}
+
