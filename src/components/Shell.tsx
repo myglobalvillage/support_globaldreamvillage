@@ -231,9 +231,9 @@ export function Shell({ me, onLogout }: { me: Me; onLogout: () => void }) {
                 <input id="queue-search" placeholder="Search ticket #, subject or booking… ( / )" value={search} onChange={e => setSearch(e.target.value)} />
                 <button
                   className="btn ghost sm"
-                  title="Check support mailbox (Hold Shift to fetch all)"
+                  title="Check support mailbox (support@globaldreamvillage.com)"
                   disabled={syncingMail}
-                  onClick={(e) => handleSyncMail(e.shiftKey ? 'ALL' : 'UNSEEN')}
+                  onClick={() => handleSyncMail('ALL')}
                 >
                   {syncingMail ? 'Syncing…' : '↻ Sync Mail'}
                 </button>
