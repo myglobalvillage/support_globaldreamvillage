@@ -1,6 +1,6 @@
 export type Role = 'admin' | 'support_admin' | 'agent'
 export type Me = { userId: string; name: string; email: string; role: Role }
-export type View = 'queue' | 'team' | 'analytics'
+export type View = 'queue' | 'team' | 'analytics' | 'onboarding'
 
 export type AnalyticsPeriod = 'week' | 'month' | 'quarter' | 'year'
 

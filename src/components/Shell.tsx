@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, AuthError, CATEGORY_LABELS, CHANNEL_LABELS, STATUS_LABELS, slaState } from '../api'
 import { useShortcuts } from '../hooks/useShortcuts'
 import { beep, desktopNotify, requestNotifyPermission } from '../lib/alerts'
@@ -11,6 +11,8 @@ import { NewTicketModal } from './NewTicketModal'
 import { Team } from './Team'
 import { useToast } from './Toast'
 import { Workspace } from './Workspace'
+
+const OnboardingPanel = lazy(() => import('../onboarding/OnboardingPanel'))
 
 const PAGE_SIZE = 25
 
@@ -59,7 +61,10 @@ export function Shell({ me, onLogout }: { me: Me; onLogout: () => void }) {
     if (!isAdmin && (view === 'analytics' || view === 'team')) {
       setView('queue')
     }
-  }, [isAdmin, view])
+    if (!canApproveRefunds && view === 'onboarding') {
+      setView('queue')
+    }
+  }, [isAdmin, canApproveRefunds, view])
 
   useEffect(() => { requestNotifyPermission() }, [])
 
@@ -196,6 +201,7 @@ export function Shell({ me, onLogout }: { me: Me; onLogout: () => void }) {
           <button className={view === 'queue' ? 'tab active' : 'tab'} onClick={() => setView('queue')}>Queue</button>
           {isAdmin && <button className={view === 'analytics' ? 'tab active' : 'tab'} onClick={() => setView('analytics')}>Analytics</button>}
           {isAdmin && <button className={view === 'team' ? 'tab active' : 'tab'} onClick={() => setView('team')}>Team</button>}
+          {canApproveRefunds && <button id="tab-onboarding" className={view === 'onboarding' ? 'tab active' : 'tab'} onClick={() => setView('onboarding')}>Onboarding</button>}
         </nav>
         <div className="who">
           <button
@@ -229,7 +235,13 @@ export function Shell({ me, onLogout }: { me: Me; onLogout: () => void }) {
             }
           }}
         />
-      ) : view === 'team' && isAdmin ? <Team me={me} /> : (
+      ) : view === 'team' && isAdmin ? <Team me={me} /> : view === 'onboarding' && canApproveRefunds ? (
+        <div className="onboarding-wrap">
+          <Suspense fallback={<div className="center pad"><div className="spinner" /></div>}>
+            <OnboardingPanel />
+          </Suspense>
+        </div>
+      ) : (
         <>
           {stats && (
             <section className="stats">

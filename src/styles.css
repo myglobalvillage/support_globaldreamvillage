@@ -391,3 +391,8 @@ code { background: #f1f5f9; padding: 1px 5px; border-radius: 4px; }
   font-family: ui-monospace, monospace;
 }
 
+
+/* Onboarding tab (ported property admin panel) */
+.onboarding-wrap { flex: 1; width: 100%; min-width: 0; }
+.onboarding-root button, .onboarding-root input, .onboarding-root select, .onboarding-root textarea { font-family: inherit; }
+
