@@ -54,10 +54,18 @@ async function apiRequest(endpoint: string, method = 'GET', body?: unknown): Pro
 }
 
 export const villaAPI = {
-  listVillas: (skip = 0, limit = 10) => {
+  listVillas: (skip = 0, limit = 10, filters?: any) => {
     const params = new URLSearchParams({ skip: String(skip), limit: String(limit) })
+    if (filters) {
+      Object.keys(filters).forEach((key) => {
+        if (filters[key] !== undefined && filters[key] !== null) {
+          params.append(key, String(filters[key]))
+        }
+      })
+    }
     return apiRequest(`${ENDPOINTS.LIST}?${params.toString()}`, 'GET')
   },
+  getVillaById: (villaId: string) => apiRequest(ENDPOINTS.BY_ID(villaId), 'GET'),
   getAmenities: () => apiRequest(ENDPOINTS.AMENITIES, 'GET'),
   createVilla: (data: any) => apiRequest(ENDPOINTS.LIST, 'POST', data),
   updateVilla: (villaId: string, data: any) => apiRequest(ENDPOINTS.BY_ID(villaId), 'PUT', data),

@@ -183,7 +183,7 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
     if (showLoading) setLoading(true);
     setError('');
     try {
-      const response = await villaAPI.listVillas(0, 100);
+      const response = await villaAPI.listVillas(0, 100, { admin: 'true' });
       if (response?.success && response?.data?.villas) {
         let cachedOverrides: Record<string, any> = {};
         try {
@@ -340,9 +340,39 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
     const names = (villa.amenities || []).map((a: any) => (typeof a === 'string' ? a : a.name));
     setSelectedAmenities(names);
 
-    // Map photos
-    const urls = villa.images || (villa.photos || []).map((p: any) => p.url) || [];
-    setUploadedPhotos(urls.length > 0 ? urls : villa.image ? [villa.image] : []);
+    // Map photos reliably from all available formats
+    const extractPhotos = (v: any): string[] => {
+      const photosArray = Array.isArray(v?.photos) && v.photos.length > 0
+        ? v.photos.map((p: any) => (typeof p === 'string' ? p : p?.url)).filter(Boolean)
+        : [];
+      const imagesArray = Array.isArray(v?.images) && v.images.length > 0
+        ? v.images.filter(Boolean)
+        : [];
+      if (photosArray.length > 0) return photosArray;
+      if (imagesArray.length > 0) return imagesArray;
+      return v?.image ? [v.image] : [];
+    };
+
+    const initialPhotos = extractPhotos(villa);
+    setUploadedPhotos(initialPhotos);
+
+    // Fetch full villa record by ID to guarantee all 5+ photos are loaded even if summary query returned fewer
+    const rawVillaId = String(villa.id || (villa as any).villaId || (villa as any).villaid);
+    if (rawVillaId) {
+      villaAPI.getVillaById(rawVillaId)
+        .then((fullRes: any) => {
+          const detailedVilla = fullRes?.data?.villa || fullRes?.villa || fullRes?.data;
+          if (detailedVilla) {
+            const fullPhotos = extractPhotos(detailedVilla);
+            if (fullPhotos.length > initialPhotos.length) {
+              setUploadedPhotos(fullPhotos);
+            }
+          }
+        })
+        .catch((err) => {
+          console.warn('Could not fetch full villa details:', err);
+        });
+    }
 
     setEditError('');
     setEditOpen(true);
@@ -405,34 +435,80 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
     );
   };
 
-  const handlePhotoUpload = (files: FileList) => {
-    setUploadError('');
-    const fileArray = Array.from(files);
-    if (fileInputRef.current) fileInputRef.current.value = '';
-
-    fileArray.forEach((file) => {
+  const compressImageFile = (file: File, maxDim = 1920, quality = 0.85): Promise<string> => {
+    return new Promise((resolve) => {
       const reader = new FileReader();
-      reader.onload = async (e) => {
-        const target = e.target as FileReader;
-        if (target && target.result) {
-          setUploadingCount((prev) => prev + 1);
-          try {
-            const resData = await villaAPI.uploadImage(target.result as string);
-            if (resData.success && resData.url) {
-              setUploadedPhotos((prev) => [...prev, resData.url]);
+      reader.onerror = () => resolve('');
+      reader.onload = (e) => {
+        const rawResult = e.target?.result as string;
+        if (!rawResult) return resolve('');
+        const img = new Image();
+        img.onerror = () => resolve(rawResult);
+        img.onload = () => {
+          let width = img.width;
+          let height = img.height;
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
             } else {
-              setUploadError(resData.error || 'Failed to upload one or more photos.');
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
             }
-          } catch (err) {
-            console.error('Photo upload failed:', err);
-            setUploadError('Upload failed. Please check connection and try again.');
-          } finally {
-            setUploadingCount((prev) => prev - 1);
           }
-        }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return resolve(rawResult);
+          ctx.drawImage(img, 0, 0, width, height);
+          let dataUrl = canvas.toDataURL('image/webp', quality);
+          if (!dataUrl || dataUrl.length < 50 || dataUrl.startsWith('data:image/png')) {
+            dataUrl = canvas.toDataURL('image/jpeg', quality);
+          }
+          resolve(dataUrl || rawResult);
+        };
+        img.src = rawResult;
       };
       reader.readAsDataURL(file);
     });
+  };
+
+  const handlePhotoUpload = async (files: FileList) => {
+    setUploadError('');
+    const fileArray = Array.from(files);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    if (fileArray.length === 0) return;
+
+    setUploadingCount(fileArray.length);
+    let failures = 0;
+
+    for (let i = 0; i < fileArray.length; i++) {
+      const file = fileArray[i];
+      try {
+        const base64Data = await compressImageFile(file);
+        if (!base64Data) {
+          failures++;
+          continue;
+        }
+        const resData = await villaAPI.uploadImage(base64Data);
+        if (resData.success && resData.url) {
+          setUploadedPhotos((prev) => [...prev, resData.url]);
+        } else {
+          failures++;
+          console.warn(`Upload failed for ${file.name}:`, resData.error);
+        }
+      } catch (err) {
+        failures++;
+        console.error(`Upload error for ${file.name}:`, err);
+      } finally {
+        setUploadingCount((prev) => Math.max(0, prev - 1));
+      }
+    }
+
+    if (failures > 0) {
+      setUploadError(`${failures} of ${fileArray.length} photos failed to upload. Please try again.`);
+    }
   };
 
   const handleRemovePhoto = (idx: number) => {
@@ -531,6 +607,8 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
         houseRules: rulesArray.length > 0 ? rulesArray : undefined,
         host: hostPayload,
         amenities: amenityPayload,
+        image: uploadedPhotos[0] || '',
+        images: uploadedPhotos,
         photos: uploadedPhotos,
       };
 
