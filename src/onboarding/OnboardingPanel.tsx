@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { villaAPI } from './villaApi';
 import { GlobalDreamVillageLogo } from '../components/GlobalDreamVillageLogo';
-import { GlobalDreamVillageBrandText } from '../components/GlobalDreamVillageBrandText';
 import {
   Box,
   Typography,
@@ -65,6 +64,11 @@ import {
   Weekend,
   MeetingRoom,
   Gavel,
+  Block,
+  Lock,
+  LockOpen,
+  ToggleOn,
+  ToggleOff,
 } from '@mui/icons-material';
 import { Villa } from './types';
 import { getOptimizedImageUrl, FALLBACK_VILLA_IMAGE } from './imageOptimizer';
@@ -89,7 +93,12 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
   const [error, setError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedType, setSelectedType] = useState('all');
+  const [selectedStatusFilter, setSelectedStatusFilter] = useState<'all' | 'active' | 'inactive' | 'blocked'>('all');
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [statusUpdatingId, setStatusUpdatingId] = useState<string | null>(null);
+  const [blockDialogOpen, setBlockDialogOpen] = useState(false);
+  const [blockingVilla, setBlockingVilla] = useState<Villa | null>(null);
+  const [blockReason, setBlockReason] = useState('');
   const [viewOwnerVilla, setViewOwnerVilla] = useState<Villa | null>(null);
 
   const handleCopyId = (id: string) => {
@@ -113,6 +122,7 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
   const [editError, setEditError] = useState('');
 
   // Edit form fields
+  const [propertyStatus, setPropertyStatus] = useState<'active' | 'inactive' | 'blocked'>('active');
   const [propertyName, setPropertyName] = useState('');
   const [propertyTitle, setPropertyTitle] = useState('');
   const [propertyType, setPropertyType] = useState('villa');
@@ -256,6 +266,7 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
 
   const handleEditOpen = (villa: Villa) => {
     setEditingVilla(villa);
+    setPropertyStatus(((villa.status || 'active').toLowerCase() as any) || 'active');
     setPropertyName(villa.name || '');
     setPropertyTitle(villa.title || villa.name || '');
     setPropertyType(villa.type || 'villa');
@@ -382,6 +393,7 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
 
   const handleCreateOpen = () => {
     setEditingVilla(null);
+    setPropertyStatus('active');
     setPropertyName('');
     setPropertyTitle('');
     setPropertyType('villa');
@@ -584,6 +596,7 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
       const rulesArray = propertyHouseRules.split('\n').map((s) => s.trim()).filter(Boolean);
 
       const payload = {
+        status: propertyStatus,
         name: propertyName.trim(),
         title: propertyTitle.trim() || propertyName.trim(),
         type: propertyType,
@@ -630,6 +643,7 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
           ...editingVilla,
           ...resVillaData,
           id: targetId,
+          status: propertyStatus,
           name: propertyName.trim(),
           title: propertyTitle.trim() || propertyName.trim(),
           price: parseFloat(propertyPrice) || editingVilla.price,
@@ -665,6 +679,7 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
           const createdVilla: Villa = res?.data?.villa || res?.data || {
             id: Date.now(),
             ...payload,
+            status: propertyStatus,
             name: propertyName.trim(),
             title: propertyTitle.trim() || propertyName.trim(),
             description: fullDescription,
@@ -739,7 +754,75 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
     }
   };
 
-  // Filter villas by search query (title, Villa ID, location, city, property owner) and property type
+  // Quick toggle active / inactive directly from the listing row
+  const handleToggleStatus = async (villa: Villa) => {
+    const targetId = String(villa.id || (villa as any).villaId || (villa as any).villaid);
+    const currentStatus = String(villa.status || 'active').toLowerCase();
+    if (currentStatus === 'blocked') {
+      if (!window.confirm(`Property "${villa.title || villa.name}" is currently BLOCKED by admin. Unblock and set to active?`)) {
+        return;
+      }
+    }
+    const nextStatus = currentStatus === 'active' ? 'inactive' : 'active';
+    setStatusUpdatingId(targetId);
+    try {
+      await villaAPI.updateVilla(targetId, { status: nextStatus });
+      setVillas((prev) =>
+        prev.map((v) => (String(v.id || (v as any).villaId || (v as any).villaid) === targetId ? { ...v, status: nextStatus } : v))
+      );
+      try {
+        const cache = JSON.parse(localStorage.getItem('custom_villas_cache') || '{}');
+        if (cache[targetId]) {
+          cache[targetId].status = nextStatus;
+          localStorage.setItem('custom_villas_cache', JSON.stringify(cache));
+        }
+      } catch (_) {}
+    } catch (err: any) {
+      console.error(err);
+      alert(err.message || 'Failed to update property status');
+    } finally {
+      setStatusUpdatingId(null);
+    }
+  };
+
+  const handleOpenBlockDialog = (villa: Villa) => {
+    setBlockingVilla(villa);
+    setBlockReason('Violation of Global Dream Village policies and listing standards');
+    setBlockDialogOpen(true);
+  };
+
+  const handleConfirmBlock = async () => {
+    if (!blockingVilla) return;
+    const targetId = String(blockingVilla.id || (blockingVilla as any).villaId || (blockingVilla as any).villaid);
+    const isCurrentlyBlocked = String(blockingVilla.status || '').toLowerCase() === 'blocked';
+    const nextStatus = isCurrentlyBlocked ? 'active' : 'blocked';
+    setStatusUpdatingId(targetId);
+    try {
+      await villaAPI.updateVilla(targetId, {
+        status: nextStatus,
+        blockReason: !isCurrentlyBlocked ? blockReason.trim() : undefined,
+      });
+      setVillas((prev) =>
+        prev.map((v) => (String(v.id || (v as any).villaId || (v as any).villaid) === targetId ? { ...v, status: nextStatus } : v))
+      );
+      try {
+        const cache = JSON.parse(localStorage.getItem('custom_villas_cache') || '{}');
+        if (cache[targetId]) {
+          cache[targetId].status = nextStatus;
+          localStorage.setItem('custom_villas_cache', JSON.stringify(cache));
+        }
+      } catch (_) {}
+      setBlockDialogOpen(false);
+      setBlockingVilla(null);
+    } catch (err: any) {
+      console.error(err);
+      alert(err.message || 'Failed to block/unblock property');
+    } finally {
+      setStatusUpdatingId(null);
+    }
+  };
+
+  // Filter villas by search query, property type, and active/inactive/blocked status
   const filteredVillas = villas.filter((v) => {
     const q = searchQuery.trim().toLowerCase();
     const villaIdStr = String(v.id || (v as any).villaId || (v as any).villaid || '').toLowerCase();
@@ -747,6 +830,7 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
     const hostEmail = (v.host?.email || '').toLowerCase();
     const hostPhone = (v.host?.phone || '').toLowerCase();
     const hostId = (v.hostId || v.host?.userId || v.host?.id || '').toLowerCase();
+    const vStatus = String(v.status || 'active').toLowerCase();
 
     const matchesSearch =
       !q ||
@@ -764,11 +848,17 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
       selectedType === 'all' ||
       (v.type || 'villa').toLowerCase() === selectedType.toLowerCase();
 
-    return matchesSearch && matchesType;
+    const matchesStatus =
+      selectedStatusFilter === 'all' || vStatus === selectedStatusFilter;
+
+    return matchesSearch && matchesType && matchesStatus;
   });
 
   // Calculate Overview Stats
   const totalListings = villas.length;
+  const activeCount = villas.filter((v) => String(v.status || 'active').toLowerCase() === 'active').length;
+  const inactiveCount = villas.filter((v) => String(v.status || '').toLowerCase() === 'inactive').length;
+  const blockedCount = villas.filter((v) => String(v.status || '').toLowerCase() === 'blocked').length;
   const uniqueCities = new Set(
     villas.map((v) => v.city || v.location?.split(',')[0]?.trim()).filter(Boolean)
   ).size;
@@ -824,24 +914,23 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
             }}
           >
             {/* Brand Lockup + Admin Badge */}
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.8 }}>
               <Box
                 onClick={onBack}
                 sx={{
                   display: 'flex',
                   alignItems: 'center',
-                  gap: 1.2,
+                  gap: 1,
                   cursor: onBack ? 'pointer' : 'default',
-                  '&:hover': onBack ? { opacity: 0.9 } : undefined,
+                  '&:hover': onBack ? { opacity: 0.88 } : undefined,
                 }}
               >
-                <GlobalDreamVillageLogo size={46} />
-                <GlobalDreamVillageBrandText size="small" />
+                <GlobalDreamVillageLogo size={40} />
               </Box>
 
               <Box
                 sx={{
-                  display: { xs: 'none', sm: 'inline-flex' },
+                  display: 'inline-flex',
                   alignItems: 'center',
                   gap: 0.7,
                   px: 1.4,
@@ -1196,8 +1285,81 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
               }}
             />
 
-            {/* Type Filter + Count Badge */}
+            {/* Filters (Status & Type) + Counter */}
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
+              {/* Status Filter Tabs */}
+              <Box sx={{ display: 'flex', backgroundColor: '#F1F5F9', p: 0.5, borderRadius: '10px', border: '1px solid #E2E8F0' }}>
+                <Button
+                  size="small"
+                  onClick={() => setSelectedStatusFilter('all')}
+                  sx={{
+                    px: 1.4,
+                    py: 0.4,
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    textTransform: 'none',
+                    borderRadius: '8px',
+                    backgroundColor: selectedStatusFilter === 'all' ? '#004B8C' : 'transparent',
+                    color: selectedStatusFilter === 'all' ? '#FFFFFF' : '#475569',
+                    '&:hover': { backgroundColor: selectedStatusFilter === 'all' ? '#003366' : '#E2E8F0' },
+                  }}
+                >
+                  All ({villas.length})
+                </Button>
+                <Button
+                  size="small"
+                  onClick={() => setSelectedStatusFilter('active')}
+                  sx={{
+                    px: 1.4,
+                    py: 0.4,
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    textTransform: 'none',
+                    borderRadius: '8px',
+                    backgroundColor: selectedStatusFilter === 'active' ? '#16A34A' : 'transparent',
+                    color: selectedStatusFilter === 'active' ? '#FFFFFF' : '#15803D',
+                    '&:hover': { backgroundColor: selectedStatusFilter === 'active' ? '#15803D' : '#E2E8F0' },
+                  }}
+                >
+                  Active ({activeCount})
+                </Button>
+                <Button
+                  size="small"
+                  onClick={() => setSelectedStatusFilter('inactive')}
+                  sx={{
+                    px: 1.4,
+                    py: 0.4,
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    textTransform: 'none',
+                    borderRadius: '8px',
+                    backgroundColor: selectedStatusFilter === 'inactive' ? '#64748B' : 'transparent',
+                    color: selectedStatusFilter === 'inactive' ? '#FFFFFF' : '#475569',
+                    '&:hover': { backgroundColor: selectedStatusFilter === 'inactive' ? '#475569' : '#E2E8F0' },
+                  }}
+                >
+                  Inactive ({inactiveCount})
+                </Button>
+                <Button
+                  size="small"
+                  onClick={() => setSelectedStatusFilter('blocked')}
+                  sx={{
+                    px: 1.4,
+                    py: 0.4,
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    textTransform: 'none',
+                    borderRadius: '8px',
+                    backgroundColor: selectedStatusFilter === 'blocked' ? '#DC2626' : 'transparent',
+                    color: selectedStatusFilter === 'blocked' ? '#FFFFFF' : '#B91C1C',
+                    '&:hover': { backgroundColor: selectedStatusFilter === 'blocked' ? '#B91C1C' : '#E2E8F0' },
+                  }}
+                >
+                  Blocked ({blockedCount})
+                </Button>
+              </Box>
+
+              {/* Property Type Dropdown */}
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <FilterList sx={{ color: '#64748B', fontSize: 20 }} />
                 <TextField
@@ -1215,10 +1377,10 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                       '&.Mui-focused fieldset': { borderColor: '#004B8C' },
                     },
                     '& select': {
-                      fontSize: '13.5px',
+                      fontSize: '13px',
                       fontFamily: "'Poppins', sans-serif",
-                      fontWeight: 500,
-                      py: 1,
+                      fontWeight: 600,
+                      py: 0.8,
                     },
                   }}
                 >
@@ -1309,6 +1471,9 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                     </TableCell>
                     <TableCell sx={{ fontWeight: 700, color: '#475569', fontSize: '13px', py: 1.8, fontFamily: "'Poppins', sans-serif" }}>
                       PROPERTY OWNER / HOST
+                    </TableCell>
+                    <TableCell sx={{ fontWeight: 700, color: '#475569', fontSize: '13px', py: 1.8, fontFamily: "'Poppins', sans-serif" }}>
+                      STATUS & VISIBILITY
                     </TableCell>
                     <TableCell sx={{ fontWeight: 700, color: '#475569', fontSize: '13px', py: 1.8, fontFamily: "'Poppins', sans-serif" }}>
                       TYPE
@@ -1618,6 +1783,86 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                               />
                             </Box>
                           )}
+                        </TableCell>
+
+                        {/* Status Toggle & Admin Block Cell */}
+                        <TableCell sx={{ py: 1.8 }}>
+                          {(() => {
+                            const rawStatus = String(villa.status || 'active').toLowerCase();
+                            const isActive = rawStatus === 'active';
+                            const isBlocked = rawStatus === 'blocked';
+                            const isUpdating = statusUpdatingId === String(villa.id || (villa as any).villaId);
+
+                            return (
+                              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.8, alignItems: 'flex-start' }}>
+                                {/* Active / Inactive Switch */}
+                                <Tooltip title={isBlocked ? 'Blocked by Admin: Property is hidden from guests due to policy violation' : isActive ? 'Property is Active and visible to guests on globaldreamvillage.com' : 'Property is Inactive and hidden from guests'}>
+                                  <Box
+                                    onClick={() => !isUpdating && handleToggleStatus(villa)}
+                                    sx={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: 0.8,
+                                      px: 1.2,
+                                      py: 0.4,
+                                      borderRadius: '999px',
+                                      cursor: isUpdating ? 'wait' : 'pointer',
+                                      backgroundColor: isBlocked ? '#FEF2F2' : isActive ? '#DCFCE7' : '#F1F5F9',
+                                      border: `1px solid ${isBlocked ? '#FCA5A5' : isActive ? '#86EFAC' : '#CBD5E1'}`,
+                                      transition: 'all 0.15s ease',
+                                      '&:hover': {
+                                        boxShadow: '0 2px 6px rgba(0,0,0,0.08)',
+                                        transform: 'translateY(-1px)',
+                                      },
+                                    }}
+                                  >
+                                    {isUpdating ? (
+                                      <CircularProgress size={14} sx={{ color: isActive ? '#16A34A' : '#475569' }} />
+                                    ) : isBlocked ? (
+                                      <Block sx={{ fontSize: 14, color: '#DC2626' }} />
+                                    ) : isActive ? (
+                                      <CheckCircle sx={{ fontSize: 14, color: '#16A34A' }} />
+                                    ) : (
+                                      <ToggleOff sx={{ fontSize: 16, color: '#64748B' }} />
+                                    )}
+                                    <Typography
+                                      sx={{
+                                        fontSize: '11.5px',
+                                        fontWeight: 700,
+                                        color: isBlocked ? '#DC2626' : isActive ? '#15803D' : '#475569',
+                                        letterSpacing: '0.3px',
+                                        textTransform: 'uppercase',
+                                      }}
+                                    >
+                                      {isBlocked ? 'Blocked' : isActive ? 'Active' : 'Inactive'}
+                                    </Typography>
+                                  </Box>
+                                </Tooltip>
+
+                                {/* Admin Violation Block / Unblock Action */}
+                                <Button
+                                  size="small"
+                                  onClick={() => handleOpenBlockDialog(villa)}
+                                  startIcon={isBlocked ? <LockOpen sx={{ fontSize: 13 }} /> : <Block sx={{ fontSize: 13 }} />}
+                                  sx={{
+                                    fontSize: '10.5px',
+                                    fontWeight: 700,
+                                    textTransform: 'none',
+                                    py: 0.1,
+                                    px: 0.8,
+                                    borderRadius: '6px',
+                                    color: isBlocked ? '#004B8C' : '#DC2626',
+                                    backgroundColor: isBlocked ? '#E6F0FA' : 'transparent',
+                                    '&:hover': {
+                                      backgroundColor: isBlocked ? '#BAE0FF' : '#FEE2E2',
+                                    },
+                                  }}
+                                >
+                                  {isBlocked ? 'Unblock Property' : 'Block Listing'}
+                                </Button>
+                              </Box>
+                            );
+                          })()}
                         </TableCell>
 
                         {/* Property Type Badge */}
@@ -1968,6 +2213,83 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                 )}
               </Box>
             )}
+
+            {/* Property Status & Admin Governance */}
+            <Paper
+              elevation={0}
+              sx={{
+                p: 2,
+                mb: 3,
+                borderRadius: '12px',
+                border: '1px solid #E2E8F0',
+                backgroundColor: propertyStatus === 'blocked' ? '#FEF2F2' : propertyStatus === 'active' ? '#F0FDF4' : '#F8FAFC',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                flexWrap: 'wrap',
+                gap: 2,
+              }}
+            >
+              <Box>
+                <Typography variant="subtitle2" sx={{ fontWeight: 700, color: '#0F172A', fontSize: '14px' }}>
+                  Listing Visibility & Status
+                </Typography>
+                <Typography variant="caption" sx={{ color: '#64748B', display: 'block', mt: 0.3 }}>
+                  {propertyStatus === 'active'
+                    ? 'Active: Displayed publicly on globaldreamvillage.com search and booking flows.'
+                    : propertyStatus === 'blocked'
+                    ? 'Blocked by Admin: Hidden from guests due to policy violation or investigation.'
+                    : 'Inactive: Hidden from guest search results until reactivated.'}
+                </Typography>
+              </Box>
+              <Box sx={{ display: 'flex', gap: 1 }}>
+                <Button
+                  size="small"
+                  variant={propertyStatus === 'active' ? 'contained' : 'outlined'}
+                  onClick={() => setPropertyStatus('active')}
+                  sx={{
+                    textTransform: 'none',
+                    fontWeight: 700,
+                    backgroundColor: propertyStatus === 'active' ? '#16A34A' : 'transparent',
+                    color: propertyStatus === 'active' ? '#fff' : '#15803D',
+                    borderColor: '#86EFAC',
+                    '&:hover': { backgroundColor: propertyStatus === 'active' ? '#15803D' : '#DCFCE7' },
+                  }}
+                >
+                  Active
+                </Button>
+                <Button
+                  size="small"
+                  variant={propertyStatus === 'inactive' ? 'contained' : 'outlined'}
+                  onClick={() => setPropertyStatus('inactive')}
+                  sx={{
+                    textTransform: 'none',
+                    fontWeight: 700,
+                    backgroundColor: propertyStatus === 'inactive' ? '#64748B' : 'transparent',
+                    color: propertyStatus === 'inactive' ? '#fff' : '#475569',
+                    borderColor: '#CBD5E1',
+                    '&:hover': { backgroundColor: propertyStatus === 'inactive' ? '#475569' : '#F1F5F9' },
+                  }}
+                >
+                  Inactive
+                </Button>
+                <Button
+                  size="small"
+                  variant={propertyStatus === 'blocked' ? 'contained' : 'outlined'}
+                  onClick={() => setPropertyStatus('blocked')}
+                  sx={{
+                    textTransform: 'none',
+                    fontWeight: 700,
+                    backgroundColor: propertyStatus === 'blocked' ? '#DC2626' : 'transparent',
+                    color: propertyStatus === 'blocked' ? '#fff' : '#DC2626',
+                    borderColor: '#FCA5A5',
+                    '&:hover': { backgroundColor: propertyStatus === 'blocked' ? '#B91C1C' : '#FEE2E2' },
+                  }}
+                >
+                  Blocked (Admin)
+                </Button>
+              </Box>
+            </Paper>
 
             {/* Section 1: Basic Information */}
             <Box>
@@ -2978,6 +3300,70 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
             }}
           >
             Close
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Admin Block Listing Dialog */}
+      <Dialog
+        open={blockDialogOpen}
+        onClose={() => setBlockDialogOpen(false)}
+        PaperProps={{
+          sx: { borderRadius: '16px', maxWidth: '480px', p: 1 },
+        }}
+      >
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1.2, fontWeight: 700, color: '#0F172A', pt: 2 }}>
+          {String(blockingVilla?.status || '').toLowerCase() === 'blocked' ? (
+            <>
+              <LockOpen sx={{ color: '#16A34A', fontSize: 26 }} />
+              Unblock Property
+            </>
+          ) : (
+            <>
+              <Block sx={{ color: '#DC2626', fontSize: 26 }} />
+              Block Property for Rule Violation
+            </>
+          )}
+        </DialogTitle>
+        <DialogContent sx={{ py: 1.5 }}>
+          {String(blockingVilla?.status || '').toLowerCase() === 'blocked' ? (
+            <Typography variant="body2" sx={{ color: '#475569', lineHeight: 1.6 }}>
+              Are you sure you want to unblock <strong>"{blockingVilla?.title || blockingVilla?.name}"</strong>? The property will be restored to active status and made available to guests.
+            </Typography>
+          ) : (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <Typography variant="body2" sx={{ color: '#475569', lineHeight: 1.6 }}>
+                Blocking <strong>"{blockingVilla?.title || blockingVilla?.name}"</strong> will immediately hide the property from public search results and prevent any new reservations.
+              </Typography>
+              <TextField
+                label="Reason for Block / Violation Note"
+                fullWidth
+                multiline
+                rows={3}
+                value={blockReason}
+                onChange={(e) => setBlockReason(e.target.value)}
+                placeholder="e.g. Violation of guest safety standards, misleading property photos, or unresolved customer dispute."
+              />
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2.5 }}>
+          <Button onClick={() => setBlockDialogOpen(false)} sx={{ textTransform: 'none', color: '#64748B', fontWeight: 600 }}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleConfirmBlock}
+            sx={{
+              textTransform: 'none',
+              fontWeight: 700,
+              backgroundColor: String(blockingVilla?.status || '').toLowerCase() === 'blocked' ? '#16A34A' : '#DC2626',
+              '&:hover': {
+                backgroundColor: String(blockingVilla?.status || '').toLowerCase() === 'blocked' ? '#15803D' : '#B91C1C',
+              },
+            }}
+          >
+            {String(blockingVilla?.status || '').toLowerCase() === 'blocked' ? 'Confirm Unblock' : 'Confirm Block'}
           </Button>
         </DialogActions>
       </Dialog>

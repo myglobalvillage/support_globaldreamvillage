@@ -194,7 +194,6 @@ export function Shell({ me, onLogout }: { me: Me; onLogout: () => void }) {
       <header className="topbar">
         <div className="logo-lockup" onClick={() => setView('queue')} title="Global Dream Village Support Center">
           <GlobalDreamVillageLogo size={42} />
-          <GlobalDreamVillageBrandText size="small" />
           <span className="logo-service-pill">Support Center</span>
         </div>
         <nav>
@@ -355,8 +354,7 @@ export function Shell({ me, onLogout }: { me: Me; onLogout: () => void }) {
                 : (
                   <div className="empty-workspace">
                     <div className="empty-workspace-brand">
-                      <GlobalDreamVillageLogo size={58} />
-                      <GlobalDreamVillageBrandText size="medium" />
+                      <GlobalDreamVillageLogo size={62} />
                     </div>
                     <h3>Global Dream Village Support Desk</h3>
                     <p>Select a customer ticket from the queue to view details, coordinate responses, and assist guests and hosts.</p>

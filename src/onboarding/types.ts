@@ -36,6 +36,9 @@ export interface Villa {
   guestAccess?: string;
   otherNotes?: string;
   houseRules?: string[] | string;
+  status?: 'active' | 'inactive' | 'blocked' | string;
+  isApproved?: boolean;
+  isapproved?: boolean;
   host?: {
     userId?: string;
     id?: string;

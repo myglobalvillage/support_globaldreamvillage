@@ -56,8 +56,7 @@ export function Login({ error, onLoggedIn }: { error: string; onLoggedIn: (id: s
       <form className="login-card" onSubmit={submit}>
         <div className="login-brand-header">
           <div className="login-brand-lockup">
-            <GlobalDreamVillageLogo size={54} />
-            <GlobalDreamVillageBrandText size="medium" />
+            <GlobalDreamVillageLogo size={58} />
           </div>
           <div className="login-brand-badge">SUPPORT OPERATIONS CENTER</div>
         </div>
