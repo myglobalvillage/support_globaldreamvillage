@@ -7,6 +7,8 @@ import { loadViews, saveViews, type SavedView } from '../lib/views'
 import { isAllowedTransition } from '../lib/workflow'
 import type { Me, QueueFilter, Ticket, View } from '../types'
 import { Analytics } from './Analytics'
+import { GlobalDreamVillageBrandText } from './GlobalDreamVillageBrandText'
+import { GlobalDreamVillageLogo } from './GlobalDreamVillageLogo'
 import { NewTicketModal } from './NewTicketModal'
 import { Team } from './Team'
 import { useToast } from './Toast'
@@ -191,11 +193,9 @@ export function Shell({ me, onLogout }: { me: Me; onLogout: () => void }) {
     <div className="shell">
       <header className="topbar">
         <div className="logo-lockup" onClick={() => setView('queue')} title="Global Dream Village Support Center">
-          <img src="/gdv-icon.png" alt="Global Dream Village" className="logo-emblem" />
-          <div className="logo-text">
-            <span className="logo-brand">GLOBAL DREAM VILLAGE</span>
-            <span className="logo-service">Support Center</span>
-          </div>
+          <GlobalDreamVillageLogo size={42} />
+          <GlobalDreamVillageBrandText size="small" />
+          <span className="logo-service-pill">Support Center</span>
         </div>
         <nav>
           <button className={view === 'queue' ? 'tab active' : 'tab'} onClick={() => setView('queue')}>Queue</button>
@@ -204,6 +204,15 @@ export function Shell({ me, onLogout }: { me: Me; onLogout: () => void }) {
           {canApproveRefunds && <button id="tab-onboarding" className={view === 'onboarding' ? 'tab active' : 'tab'} onClick={() => setView('onboarding')}>Onboarding</button>}
         </nav>
         <div className="who">
+          <a
+            href="https://www.globaldreamvillage.com"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="btn ghost sm site-link-pill"
+            title="Visit globaldreamvillage.com"
+          >
+            globaldreamvillage.com ↗
+          </a>
           <button
             id="topbar-refresh-btn"
             className="btn ghost sm refresh-pill"
@@ -238,7 +247,7 @@ export function Shell({ me, onLogout }: { me: Me; onLogout: () => void }) {
       ) : view === 'team' && isAdmin ? <Team me={me} /> : view === 'onboarding' && canApproveRefunds ? (
         <div className="onboarding-wrap">
           <Suspense fallback={<div className="center pad"><div className="spinner" /></div>}>
-            <OnboardingPanel />
+            <OnboardingPanel onBack={() => setView('queue')} />
           </Suspense>
         </div>
       ) : (
@@ -345,7 +354,10 @@ export function Shell({ me, onLogout }: { me: Me; onLogout: () => void }) {
                 ? <Workspace key={selected} id={selected} me={me} isAdmin={canApproveRefunds} onChanged={load} onClose={() => setSelected(null)} onFilterCustomer={filterCustomer} />
                 : (
                   <div className="empty-workspace">
-                    <img src="/gdv-icon.png" alt="Global Dream Village" className="empty-workspace-emblem" />
+                    <div className="empty-workspace-brand">
+                      <GlobalDreamVillageLogo size={58} />
+                      <GlobalDreamVillageBrandText size="medium" />
+                    </div>
                     <h3>Global Dream Village Support Desk</h3>
                     <p>Select a customer ticket from the queue to view details, coordinate responses, and assist guests and hosts.</p>
                     <div className="empty-tips">

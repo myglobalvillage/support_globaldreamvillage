@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { api, setToken } from '../api'
+import { GlobalDreamVillageBrandText } from './GlobalDreamVillageBrandText'
+import { GlobalDreamVillageLogo } from './GlobalDreamVillageLogo'
 
 type LoginStatus = 'idle' | 'authenticating' | 'verifying' | 'success' | 'error'
 
@@ -53,12 +55,10 @@ export function Login({ error, onLoggedIn }: { error: string; onLoggedIn: (id: s
     <div className="login-wrap">
       <form className="login-card" onSubmit={submit}>
         <div className="login-brand-header">
-          <img
-            src="/brand-logo.png"
-            alt="Global Dream Village Logo"
-            className="login-brand-logo"
-          />
-          <p className="login-motto">where every stay becomes a dream</p>
+          <div className="login-brand-lockup">
+            <GlobalDreamVillageLogo size={54} />
+            <GlobalDreamVillageBrandText size="medium" />
+          </div>
           <div className="login-brand-badge">SUPPORT OPERATIONS CENTER</div>
         </div>
 

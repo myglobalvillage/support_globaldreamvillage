@@ -19,7 +19,7 @@ export function NewTicketModal({ onClose, onCreated }: { onClose: () => void; on
     <div className="modal-back" onClick={onClose}>
       <form className="modal" onClick={e => e.stopPropagation()} onSubmit={submit}>
         <div className="modal-header-brand">
-          <img src="/gdv-icon.png" alt="Global Dream Village" className="modal-emblem" />
+          <img src="/gdv-official-logo.png" alt="Global Dream Village" className="modal-emblem" />
           <div>
             <h2>Log a ticket for a customer</h2>
             <p className="muted small">Global Dream Village Guest & Host Support Intake</p>

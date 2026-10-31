@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { villaAPI } from './villaApi';
+import { GlobalDreamVillageLogo } from '../components/GlobalDreamVillageLogo';
+import { GlobalDreamVillageBrandText } from '../components/GlobalDreamVillageBrandText';
 import {
   Box,
   Typography,
@@ -700,13 +702,34 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
     if (!deletingVillaId) return;
     setDeleting(true);
     try {
-      const res = await villaAPI.deleteVilla(deletingVillaId);
+      const targetId = String(deletingVillaId);
+      const res = await villaAPI.deleteVilla(targetId);
       if (res?.success) {
+        setVillas((prev) =>
+          prev.filter(
+            (v) =>
+              String(v.id || (v as any).villaId || (v as any).villaid || '') !== targetId
+          )
+        );
+        try {
+          const cached = localStorage.getItem('custom_villas_cache');
+          if (cached) {
+            const parsed = JSON.parse(cached);
+            if (Array.isArray(parsed)) {
+              const filtered = parsed.filter(
+                (v: any) => String(v.id || v.villaId || v.villaid || '') !== targetId
+              );
+              localStorage.setItem('custom_villas_cache', JSON.stringify(filtered));
+            }
+          }
+        } catch {
+          // ignore localStorage errors
+        }
         setDeleteOpen(false);
         setDeletingVillaId(null);
         fetchVillas();
       } else {
-        throw new Error(res?.message || 'Failed to delete listing.');
+        throw new Error(res?.message || res?.error || 'Failed to delete listing.');
       }
     } catch (err: any) {
       console.error(err);
@@ -802,15 +825,19 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
           >
             {/* Brand Lockup + Admin Badge */}
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-              {/* Brand lockup is provided by the console's topbar when embedded */}
-              {onBack && (
-                <Box
-                  onClick={onBack}
-                  sx={{ display: 'flex', alignItems: 'center', gap: 1.2, cursor: 'pointer', '&:hover': { opacity: 0.9 } }}
-                >
-                  <img src="/gdv-icon.png" alt="Global Dream Village" width={46} height={46} style={{ objectFit: 'contain' }} />
-                </Box>
-              )}
+              <Box
+                onClick={onBack}
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 1.2,
+                  cursor: onBack ? 'pointer' : 'default',
+                  '&:hover': onBack ? { opacity: 0.9 } : undefined,
+                }}
+              >
+                <GlobalDreamVillageLogo size={46} />
+                <GlobalDreamVillageBrandText size="small" />
+              </Box>
 
               <Box
                 sx={{
