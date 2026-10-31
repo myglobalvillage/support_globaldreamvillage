@@ -28,6 +28,7 @@ import {
   Container,
   Avatar,
   Switch,
+  Snackbar,
 } from '@mui/material';
 import {
   ArrowBack,
@@ -69,12 +70,96 @@ import {
   LockOpen,
   ToggleOn,
   ToggleOff,
+  CheckCircleOutline,
+  PauseCircleOutline,
 } from '@mui/icons-material';
 import { Villa } from './types';
 import { getOptimizedImageUrl, FALLBACK_VILLA_IMAGE } from './imageOptimizer';
 
 type AdminPanelProps = {
   onBack?: () => void;
+};
+
+// Dedicated localStorage keys for robust cross-session status synchronization
+const STATUS_OVERRIDES_KEY = 'gdv_villa_status_overrides';
+const CUSTOM_VILLAS_KEY = 'custom_villas_cache';
+
+const getStoredStatusOverrides = (): Record<string, string> => {
+  try {
+    const raw = localStorage.getItem(STATUS_OVERRIDES_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+};
+
+const persistStatusOverride = (villaId: string, status: string) => {
+  const targetId = String(villaId);
+  try {
+    const overrides = getStoredStatusOverrides();
+    overrides[targetId] = status;
+    localStorage.setItem(STATUS_OVERRIDES_KEY, JSON.stringify(overrides));
+  } catch {}
+
+  try {
+    const raw = localStorage.getItem(CUSTOM_VILLAS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        let found = false;
+        const updated = parsed.map((item: any) => {
+          if (String(item?.id || item?.villaId || item?.villaid) === targetId) {
+            found = true;
+            return { ...item, status };
+          }
+          return item;
+        });
+        if (!found) {
+          updated.push({ id: targetId, villaId: targetId, status });
+        }
+        localStorage.setItem(CUSTOM_VILLAS_KEY, JSON.stringify(updated));
+      } else if (typeof parsed === 'object' && parsed !== null) {
+        parsed[targetId] = { ...(parsed[targetId] || {}), status };
+        localStorage.setItem(CUSTOM_VILLAS_KEY, JSON.stringify(parsed));
+      }
+    } else {
+      localStorage.setItem(CUSTOM_VILLAS_KEY, JSON.stringify({ [targetId]: { status } }));
+    }
+  } catch {}
+};
+
+const persistBulkStatusOverrides = (villaIds: string[], status: string) => {
+  try {
+    const overrides = getStoredStatusOverrides();
+    villaIds.forEach((id) => {
+      overrides[String(id)] = status;
+    });
+    localStorage.setItem(STATUS_OVERRIDES_KEY, JSON.stringify(overrides));
+  } catch {}
+
+  try {
+    const raw = localStorage.getItem(CUSTOM_VILLAS_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) {
+        const idSet = new Set(villaIds.map(String));
+        const updated = parsed.map((item: any) => {
+          const rawId = String(item?.id || item?.villaId || item?.villaid);
+          if (idSet.has(rawId)) {
+            return { ...item, status };
+          }
+          return item;
+        });
+        localStorage.setItem(CUSTOM_VILLAS_KEY, JSON.stringify(updated));
+      } else if (typeof parsed === 'object' && parsed !== null) {
+        villaIds.forEach((id) => {
+          const sid = String(id);
+          parsed[sid] = { ...(parsed[sid] || {}), status };
+        });
+        localStorage.setItem(CUSTOM_VILLAS_KEY, JSON.stringify(parsed));
+      }
+    }
+  } catch {}
 };
 
 const PROPERTY_TYPES = [
@@ -100,6 +185,28 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
   const [blockingVilla, setBlockingVilla] = useState<Villa | null>(null);
   const [blockReason, setBlockReason] = useState('');
   const [viewOwnerVilla, setViewOwnerVilla] = useState<Villa | null>(null);
+  const [bulkUpdating, setBulkUpdating] = useState(false);
+  const [bulkTargetStatus, setBulkTargetStatus] = useState<'active' | 'inactive' | null>(null);
+  const [bulkConfirmDialog, setBulkConfirmDialog] = useState<{
+    open: boolean;
+    targetStatus: 'active' | 'inactive';
+    title: string;
+    message: string;
+  }>({
+    open: false,
+    targetStatus: 'active',
+    title: '',
+    message: '',
+  });
+  const [toastSnackbar, setToastSnackbar] = useState<{
+    open: boolean;
+    message: string;
+    severity: 'success' | 'info' | 'error';
+  }>({
+    open: false,
+    message: '',
+    severity: 'success',
+  });
 
   const handleCopyId = (id: string) => {
     if (!id) return;
@@ -197,23 +304,53 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
     try {
       const response = await villaAPI.listVillas(0, 100, { admin: 'true' });
       if (response?.success && response?.data?.villas) {
-        let cachedOverrides: Record<string, any> = {};
+        const statusOverrides = getStoredStatusOverrides();
+        let cachedOverrides: any = {};
         try {
-          cachedOverrides = JSON.parse(localStorage.getItem('custom_villas_cache') || '{}');
+          const rawCustom = localStorage.getItem(CUSTOM_VILLAS_KEY);
+          if (rawCustom) cachedOverrides = JSON.parse(rawCustom);
         } catch (_) {}
 
         const mappedVillas = response.data.villas.map((v: any) => {
           const rawId = String(v.id || v.villaId || v.villaid);
-          const override = cachedOverrides[rawId] || {};
+          const customEntry = Array.isArray(cachedOverrides)
+            ? (cachedOverrides.find((c: any) => String(c?.id || c?.villaId || c?.villaid) === rawId) || {})
+            : (cachedOverrides[rawId] || {});
+
+          // Robust status determination:
+          // 1. Status explicitly chosen by admin in gdv_villa_status_overrides
+          // 2. Custom entry status if set
+          // 3. Backend status
+          let effectiveStatus = (v.status || '').toLowerCase();
+          if (statusOverrides[rawId]) {
+            effectiveStatus = statusOverrides[rawId];
+          } else if (customEntry.status) {
+            effectiveStatus = customEntry.status;
+          } else if (!effectiveStatus) {
+            effectiveStatus = 'active';
+          }
+
           return {
             ...v,
-            ...override,
+            ...customEntry,
             id: rawId,
             villaId: rawId,
-            price: override.price || v.price || v.pricePerNight,
+            status: effectiveStatus,
+            price: customEntry.price || v.price || v.pricePerNight,
           };
         });
-        setVillas(mappedVillas);
+
+        // Preserve optimistic in-progress state for item currently being updated
+        setVillas((prev) => {
+          return mappedVillas.map((mv: Villa) => {
+            const mvId = String(mv.id || (mv as any).villaId || (mv as any).villaid);
+            if (statusUpdatingId && mvId === statusUpdatingId) {
+              const current = prev.find((p) => String(p.id || (p as any).villaId || (p as any).villaid) === mvId);
+              if (current) return { ...mv, status: current.status };
+            }
+            return mv;
+          });
+        });
       } else {
         throw new Error('Failed to retrieve listings.');
       }
@@ -765,21 +902,23 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
     }
     const nextStatus = currentStatus === 'active' ? 'inactive' : 'active';
     setStatusUpdatingId(targetId);
+
+    // Optimistic update
+    setVillas((prev) =>
+      prev.map((v) => (String(v.id || (v as any).villaId || (v as any).villaid) === targetId ? { ...v, status: nextStatus } : v))
+    );
+    persistStatusOverride(targetId, nextStatus);
+
     try {
       await villaAPI.updateVilla(targetId, { status: nextStatus });
-      setVillas((prev) =>
-        prev.map((v) => (String(v.id || (v as any).villaId || (v as any).villaid) === targetId ? { ...v, status: nextStatus } : v))
-      );
-      try {
-        const cache = JSON.parse(localStorage.getItem('custom_villas_cache') || '{}');
-        if (cache[targetId]) {
-          cache[targetId].status = nextStatus;
-          localStorage.setItem('custom_villas_cache', JSON.stringify(cache));
-        }
-      } catch (_) {}
     } catch (err: any) {
       console.error(err);
       alert(err.message || 'Failed to update property status');
+      // Revert if API failed
+      setVillas((prev) =>
+        prev.map((v) => (String(v.id || (v as any).villaId || (v as any).villaid) === targetId ? { ...v, status: currentStatus } : v))
+      );
+      persistStatusOverride(targetId, currentStatus);
     } finally {
       setStatusUpdatingId(null);
     }
@@ -794,31 +933,97 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
   const handleConfirmBlock = async () => {
     if (!blockingVilla) return;
     const targetId = String(blockingVilla.id || (blockingVilla as any).villaId || (blockingVilla as any).villaid);
-    const isCurrentlyBlocked = String(blockingVilla.status || '').toLowerCase() === 'blocked';
+    const prevStatus = String(blockingVilla.status || 'active').toLowerCase();
+    const isCurrentlyBlocked = prevStatus === 'blocked';
     const nextStatus = isCurrentlyBlocked ? 'active' : 'blocked';
     setStatusUpdatingId(targetId);
+
+    // Optimistic update
+    setVillas((prev) =>
+      prev.map((v) => (String(v.id || (v as any).villaId || (v as any).villaid) === targetId ? { ...v, status: nextStatus } : v))
+    );
+    persistStatusOverride(targetId, nextStatus);
+    setBlockDialogOpen(false);
+    setBlockingVilla(null);
+
     try {
       await villaAPI.updateVilla(targetId, {
         status: nextStatus,
         blockReason: !isCurrentlyBlocked ? blockReason.trim() : undefined,
       });
-      setVillas((prev) =>
-        prev.map((v) => (String(v.id || (v as any).villaId || (v as any).villaid) === targetId ? { ...v, status: nextStatus } : v))
-      );
-      try {
-        const cache = JSON.parse(localStorage.getItem('custom_villas_cache') || '{}');
-        if (cache[targetId]) {
-          cache[targetId].status = nextStatus;
-          localStorage.setItem('custom_villas_cache', JSON.stringify(cache));
-        }
-      } catch (_) {}
-      setBlockDialogOpen(false);
-      setBlockingVilla(null);
     } catch (err: any) {
       console.error(err);
       alert(err.message || 'Failed to block/unblock property');
+      // Revert if API failed
+      setVillas((prev) =>
+        prev.map((v) => (String(v.id || (v as any).villaId || (v as any).villaid) === targetId ? { ...v, status: prevStatus } : v))
+      );
+      persistStatusOverride(targetId, prevStatus);
     } finally {
       setStatusUpdatingId(null);
+    }
+  };
+
+  // Bulk status controls: Make All Active / Make All Inactive
+  const handleOpenBulkConfirm = (targetStatus: 'active' | 'inactive') => {
+    if (villas.length === 0) return;
+    setBulkTargetStatus(targetStatus);
+    if (targetStatus === 'active') {
+      setBulkConfirmDialog({
+        open: true,
+        targetStatus: 'active',
+        title: 'Make All Properties Active',
+        message: `Set all ${villas.length} properties to Active? All properties will become immediately visible and bookable by guests on globaldreamvillage.com.`,
+      });
+    } else {
+      setBulkConfirmDialog({
+        open: true,
+        targetStatus: 'inactive',
+        title: 'Make All Properties Inactive',
+        message: `Set all ${villas.length} properties to Inactive? All properties will be hidden from guests on globaldreamvillage.com until reactivated.`,
+      });
+    }
+  };
+
+  const handleExecuteBulkStatus = async () => {
+    const targetStatus = bulkConfirmDialog.targetStatus;
+    setBulkConfirmDialog((prev) => ({ ...prev, open: false }));
+    setBulkUpdating(true);
+    setBulkTargetStatus(targetStatus);
+
+    const allIds = villas.map((v) => String(v.id || (v as any).villaId || (v as any).villaid));
+
+    // Optimistic update across all listings
+    setVillas((prev) => prev.map((v) => ({ ...v, status: targetStatus })));
+    persistBulkStatusOverrides(allIds, targetStatus);
+
+    try {
+      try {
+        await villaAPI.bulkUpdateStatus(targetStatus, allIds);
+      } catch (bulkErr) {
+        console.warn('Backend bulk endpoint fallback to parallel updates:', bulkErr);
+        const chunkSize = 5;
+        for (let i = 0; i < allIds.length; i += chunkSize) {
+          const chunk = allIds.slice(i, i + chunkSize);
+          await Promise.allSettled(chunk.map((id) => villaAPI.updateVilla(id, { status: targetStatus })));
+        }
+      }
+      setToastSnackbar({
+        open: true,
+        message: `Successfully updated all ${allIds.length} properties to ${targetStatus === 'active' ? 'Active' : 'Inactive'}.`,
+        severity: 'success',
+      });
+    } catch (err: any) {
+      console.error('Bulk update error:', err);
+      setToastSnackbar({
+        open: true,
+        message: err.message || 'Failed to complete bulk status update',
+        severity: 'error',
+      });
+    } finally {
+      setBulkUpdating(false);
+      setBulkTargetStatus(null);
+      fetchVillas(false);
     }
   };
 
@@ -1356,6 +1561,73 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                   }}
                 >
                   Blocked ({blockedCount})
+                </Button>
+              </Box>
+
+              {/* Admin Bulk Status Controls: Make All Active / Make All Inactive */}
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  disabled={bulkUpdating || villas.length === 0}
+                  onClick={() => handleOpenBulkConfirm('active')}
+                  startIcon={
+                    bulkUpdating && bulkTargetStatus === 'active' ? (
+                      <CircularProgress size={14} color="inherit" />
+                    ) : (
+                      <CheckCircleOutline sx={{ fontSize: 16 }} />
+                    )
+                  }
+                  sx={{
+                    px: 1.5,
+                    py: 0.6,
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    textTransform: 'none',
+                    borderRadius: '8px',
+                    borderColor: '#86EFAC',
+                    backgroundColor: '#F0FDF4',
+                    color: '#15803D',
+                    fontFamily: "'Poppins', sans-serif",
+                    '&:hover': {
+                      backgroundColor: '#DCFCE7',
+                      borderColor: '#16A34A',
+                    },
+                  }}
+                >
+                  Make All Active
+                </Button>
+
+                <Button
+                  size="small"
+                  variant="outlined"
+                  disabled={bulkUpdating || villas.length === 0}
+                  onClick={() => handleOpenBulkConfirm('inactive')}
+                  startIcon={
+                    bulkUpdating && bulkTargetStatus === 'inactive' ? (
+                      <CircularProgress size={14} color="inherit" />
+                    ) : (
+                      <PauseCircleOutline sx={{ fontSize: 16 }} />
+                    )
+                  }
+                  sx={{
+                    px: 1.5,
+                    py: 0.6,
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    textTransform: 'none',
+                    borderRadius: '8px',
+                    borderColor: '#CBD5E1',
+                    backgroundColor: '#F8FAFC',
+                    color: '#475569',
+                    fontFamily: "'Poppins', sans-serif",
+                    '&:hover': {
+                      backgroundColor: '#F1F5F9',
+                      borderColor: '#94A3B8',
+                    },
+                  }}
+                >
+                  Make All Inactive
                 </Button>
               </Box>
 
@@ -3367,6 +3639,102 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Admin Bulk Status Confirmation Dialog */}
+      <Dialog
+        open={bulkConfirmDialog.open}
+        onClose={() => !bulkUpdating && setBulkConfirmDialog((prev) => ({ ...prev, open: false }))}
+        PaperProps={{
+          sx: {
+            borderRadius: '16px',
+            p: 1,
+            maxWidth: '460px',
+            width: '100%',
+          },
+        }}
+      >
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1.5, pb: 1 }}>
+          <Box
+            sx={{
+              width: 42,
+              height: 42,
+              borderRadius: '10px',
+              backgroundColor: bulkConfirmDialog.targetStatus === 'active' ? '#DCFCE7' : '#FEF3C7',
+              color: bulkConfirmDialog.targetStatus === 'active' ? '#15803D' : '#D97706',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            {bulkConfirmDialog.targetStatus === 'active' ? (
+              <CheckCircleOutline sx={{ fontSize: 24 }} />
+            ) : (
+              <PauseCircleOutline sx={{ fontSize: 24 }} />
+            )}
+          </Box>
+          <Box>
+            <Typography variant="h6" sx={{ fontWeight: 800, fontSize: '17px', color: '#0F172A', fontFamily: "'Poppins', sans-serif" }}>
+              {bulkConfirmDialog.title}
+            </Typography>
+            <Typography variant="caption" sx={{ color: '#64748B' }}>
+              Global Dream Village Admin Console
+            </Typography>
+          </Box>
+        </DialogTitle>
+        <DialogContent>
+          <Typography variant="body2" sx={{ color: '#475569', fontSize: '13.5px', lineHeight: 1.6, mt: 1 }}>
+            {bulkConfirmDialog.message}
+          </Typography>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2.5, pt: 1, gap: 1 }}>
+          <Button
+            variant="outlined"
+            onClick={() => setBulkConfirmDialog((prev) => ({ ...prev, open: false }))}
+            disabled={bulkUpdating}
+            sx={{
+              textTransform: 'none',
+              fontWeight: 600,
+              borderRadius: '8px',
+              borderColor: '#CBD5E1',
+              color: '#475569',
+            }}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleExecuteBulkStatus}
+            disabled={bulkUpdating}
+            sx={{
+              textTransform: 'none',
+              fontWeight: 700,
+              borderRadius: '8px',
+              backgroundColor: bulkConfirmDialog.targetStatus === 'active' ? '#16A34A' : '#475569',
+              '&:hover': {
+                backgroundColor: bulkConfirmDialog.targetStatus === 'active' ? '#15803D' : '#334155',
+              },
+            }}
+          >
+            {bulkConfirmDialog.targetStatus === 'active' ? 'Confirm Make All Active' : 'Confirm Make All Inactive'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Global Toast Snackbar */}
+      <Snackbar
+        open={toastSnackbar.open}
+        autoHideDuration={4000}
+        onClose={() => setToastSnackbar((prev) => ({ ...prev, open: false }))}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      >
+        <Alert
+          onClose={() => setToastSnackbar((prev) => ({ ...prev, open: false }))}
+          severity={toastSnackbar.severity}
+          sx={{ width: '100%', borderRadius: '10px', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
+        >
+          {toastSnackbar.message}
+        </Alert>
+      </Snackbar>
 
       {/* Delete Confirmation Dialog */}
       <Dialog

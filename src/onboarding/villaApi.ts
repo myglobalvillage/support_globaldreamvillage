@@ -14,6 +14,7 @@ const ENDPOINTS = {
   AMENITIES: '/villas/amenities',
   BY_ID: (id: string) => `/villas/${id}`,
   UPLOAD_IMAGE: '/villas/upload-image',
+  BULK_STATUS: '/villas/bulk-status',
 }
 
 async function apiRequest(endpoint: string, method = 'GET', body?: unknown): Promise<any> {
@@ -24,8 +25,11 @@ async function apiRequest(endpoint: string, method = 'GET', body?: unknown): Pro
   try {
     const response = await fetch(`${API_BASE_URL}${endpoint}`, {
       method,
+      cache: 'no-store',
       headers: {
         'Content-Type': 'application/json',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
+        'Pragma': 'no-cache',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: body ? JSON.stringify(body) : undefined,
@@ -63,6 +67,8 @@ export const villaAPI = {
         }
       })
     }
+    // Bust browser/proxy caching for real-time admin sync
+    params.append('_t', String(Date.now()))
     return apiRequest(`${ENDPOINTS.LIST}?${params.toString()}`, 'GET')
   },
   getVillaById: (villaId: string) => apiRequest(ENDPOINTS.BY_ID(villaId), 'GET'),
@@ -71,4 +77,6 @@ export const villaAPI = {
   updateVilla: (villaId: string, data: any) => apiRequest(ENDPOINTS.BY_ID(villaId), 'PUT', data),
   deleteVilla: (villaId: string) => apiRequest(ENDPOINTS.BY_ID(villaId), 'DELETE'),
   uploadImage: (image: string) => apiRequest(ENDPOINTS.UPLOAD_IMAGE, 'POST', { image }),
+  bulkUpdateStatus: (status: 'active' | 'inactive' | 'blocked', villaIds?: string[]) =>
+    apiRequest(ENDPOINTS.BULK_STATUS, 'POST', { status, villaIds }),
 }
