@@ -206,9 +206,124 @@ const PROPERTY_TYPES = [
   { value: 'cottage', label: 'Cottage' },
 ];
 
+const VILLAS_LIST_CACHE_KEY = 'gdv_onboarding_villas_cache_v1';
+const AMENITIES_CACHE_KEY = 'gdv_onboarding_amenities_cache_v1';
+
+let memoryVillasCache: Villa[] | null = null;
+let memoryAmenitiesCache: any[] | null = null;
+let inflightVillasPromise: Promise<Villa[] | null> | null = null;
+
+const normalizeVillasList = (rawList: any[]): Villa[] => {
+  const statusOverrides = getStoredStatusOverrides();
+  let cachedOverrides: any = {};
+  try {
+    const rawCustom = localStorage.getItem(CUSTOM_VILLAS_KEY);
+    if (rawCustom) cachedOverrides = JSON.parse(rawCustom);
+  } catch (_) {}
+
+  return rawList.map((v: any) => {
+    const rawId = String(v.id || v.villaId || v.villaid);
+    const customEntry = Array.isArray(cachedOverrides)
+      ? (cachedOverrides.find((c: any) => String(c?.id || c?.villaId || c?.villaid) === rawId) || {})
+      : (cachedOverrides[rawId] || {});
+
+    let effectiveStatus = (v.status || '').toLowerCase();
+    if (isInOnboardingReview(effectiveStatus)) {
+      // Server-driven onboarding state always wins over cached local overrides
+    } else if (statusOverrides[rawId]) {
+      effectiveStatus = statusOverrides[rawId];
+    } else if (customEntry.status) {
+      effectiveStatus = customEntry.status;
+    } else if (!effectiveStatus) {
+      effectiveStatus = 'active';
+    }
+
+    return {
+      ...v,
+      ...customEntry,
+      id: rawId,
+      villaId: rawId,
+      status: effectiveStatus,
+      price: customEntry.price || v.price || v.pricePerNight,
+    };
+  });
+};
+
+const getInitialCachedVillas = (): Villa[] => {
+  if (memoryVillasCache && memoryVillasCache.length > 0) {
+    return normalizeVillasList(memoryVillasCache);
+  }
+  try {
+    const raw = localStorage.getItem(VILLAS_LIST_CACHE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        const mapped = normalizeVillasList(parsed);
+        memoryVillasCache = mapped;
+        return mapped;
+      }
+    }
+  } catch {}
+  return [];
+};
+
+const getInitialCachedAmenities = (): any[] => {
+  if (memoryAmenitiesCache && memoryAmenitiesCache.length > 0) return memoryAmenitiesCache;
+  try {
+    const raw = localStorage.getItem(AMENITIES_CACHE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        memoryAmenitiesCache = parsed;
+        return parsed;
+      }
+    }
+  } catch {}
+  return [];
+};
+
+const saveVillasToCache = (list: Villa[]) => {
+  memoryVillasCache = list;
+  try {
+    localStorage.setItem(VILLAS_LIST_CACHE_KEY, JSON.stringify(list));
+  } catch {}
+};
+
+export const prefetchOnboardingData = () => {
+  if (!inflightVillasPromise) {
+    inflightVillasPromise = villaAPI
+      .listVillas(0, 100, { admin: 'true' })
+      .then((response) => {
+        if (response?.success && Array.isArray(response?.data?.villas)) {
+          const mapped = normalizeVillasList(response.data.villas);
+          saveVillasToCache(mapped);
+          return mapped;
+        }
+        return null;
+      })
+      .catch(() => null)
+      .finally(() => {
+        inflightVillasPromise = null;
+      });
+  }
+  if (!memoryAmenitiesCache || memoryAmenitiesCache.length === 0) {
+    villaAPI
+      .getAmenities()
+      .then((response) => {
+        if (response?.success && Array.isArray(response?.data?.amenities)) {
+          memoryAmenitiesCache = response.data.amenities;
+          try {
+            localStorage.setItem(AMENITIES_CACHE_KEY, JSON.stringify(response.data.amenities));
+          } catch {}
+        }
+      })
+      .catch(() => {});
+  }
+};
+
 export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
-  const [villas, setVillas] = useState<Villa[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [villas, setVillas] = useState<Villa[]>(() => getInitialCachedVillas());
+  const [loading, setLoading] = useState<boolean>(() => getInitialCachedVillas().length === 0);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -262,7 +377,7 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
   };
 
   // Amenities from master table
-  const [dbAmenities, setDbAmenities] = useState<any[]>([]);
+  const [dbAmenities, setDbAmenities] = useState<any[]>(() => getInitialCachedAmenities());
 
   // Edit states
   const [editOpen, setEditOpen] = useState(false);
@@ -341,68 +456,43 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
   const [deleting, setDeleting] = useState(false);
 
   const fetchVillas = async (showLoading = false) => {
-    if (showLoading) setLoading(true);
+    const hasExistingData = (memoryVillasCache && memoryVillasCache.length > 0) || villas.length > 0;
+    if (showLoading && !hasExistingData) setLoading(true);
     setError('');
     try {
-      const response = await villaAPI.listVillas(0, 100, { admin: 'true' });
-      if (response?.success && response?.data?.villas) {
-        const statusOverrides = getStoredStatusOverrides();
-        let cachedOverrides: any = {};
-        try {
-          const rawCustom = localStorage.getItem(CUSTOM_VILLAS_KEY);
-          if (rawCustom) cachedOverrides = JSON.parse(rawCustom);
-        } catch (_) {}
-
-        const mappedVillas = response.data.villas.map((v: any) => {
-          const rawId = String(v.id || v.villaId || v.villaid);
-          const customEntry = Array.isArray(cachedOverrides)
-            ? (cachedOverrides.find((c: any) => String(c?.id || c?.villaId || c?.villaid) === rawId) || {})
-            : (cachedOverrides[rawId] || {});
-
-          // Robust status determination:
-          // 1. Status explicitly chosen by admin in gdv_villa_status_overrides
-          // 2. Custom entry status if set
-          // 3. Backend status
-          let effectiveStatus = (v.status || '').toLowerCase();
-          if (isInOnboardingReview(effectiveStatus)) {
-            // Server-driven onboarding state always wins over cached local overrides
-          } else if (statusOverrides[rawId]) {
-            effectiveStatus = statusOverrides[rawId];
-          } else if (customEntry.status) {
-            effectiveStatus = customEntry.status;
-          } else if (!effectiveStatus) {
-            effectiveStatus = 'active';
-          }
-
-          return {
-            ...v,
-            ...customEntry,
-            id: rawId,
-            villaId: rawId,
-            status: effectiveStatus,
-            price: customEntry.price || v.price || v.pricePerNight,
-          };
-        });
-
-        // Preserve optimistic in-progress state for item currently being updated
-        setVillas((prev) => {
-          return mappedVillas.map((mv: Villa) => {
-            const mvId = String(mv.id || (mv as any).villaId || (mv as any).villaid);
-            if (statusUpdatingId && mvId === statusUpdatingId) {
-              const current = prev.find((p) => String(p.id || (p as any).villaId || (p as any).villaid) === mvId);
-              if (current) return { ...mv, status: current.status };
-            }
-            return mv;
-          });
-        });
-      } else {
-        throw new Error('Failed to retrieve listings.');
+      let mappedVillas: Villa[] | null = null;
+      if (inflightVillasPromise) {
+        mappedVillas = await inflightVillasPromise;
       }
+      if (!mappedVillas) {
+        const response = await villaAPI.listVillas(0, 100, { admin: 'true' });
+        if (response?.success && response?.data?.villas) {
+          mappedVillas = normalizeVillasList(response.data.villas);
+        } else {
+          throw new Error('Failed to retrieve listings.');
+        }
+      }
+
+      // Preserve optimistic in-progress state for item currently being updated
+      setVillas((prev) => {
+        const nextList = mappedVillas!.map((mv: Villa) => {
+          const mvId = String(mv.id || (mv as any).villaId || (mv as any).villaid);
+          if (statusUpdatingId && mvId === statusUpdatingId) {
+            const current = prev.find((p) => String(p.id || (p as any).villaId || (p as any).villaid) === mvId);
+            if (current) return { ...mv, status: current.status };
+          }
+          return mv;
+        });
+        saveVillasToCache(nextList);
+        return nextList;
+      });
     } catch (err: any) {
       console.error(err);
-      setError(err.message || 'Unable to fetch villas.');
+      if (!hasExistingData) {
+        setError(err.message || 'Unable to fetch villas.');
+      }
     } finally {
-      if (showLoading) setLoading(false);
+      setLoading(false);
       setRefreshing(false);
     }
   };
@@ -434,10 +524,20 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
     };
   }, []);
 
+  useEffect(() => {
+    if (villas.length > 0) {
+      saveVillasToCache(villas);
+    }
+  }, [villas]);
+
   const fetchAmenities = async () => {
     try {
       const response = await villaAPI.getAmenities();
       if (response?.success && Array.isArray(response?.data?.amenities)) {
+        memoryAmenitiesCache = response.data.amenities;
+        try {
+          localStorage.setItem(AMENITIES_CACHE_KEY, JSON.stringify(response.data.amenities));
+        } catch {}
         setDbAmenities(response.data.amenities);
       }
     } catch (err) {
@@ -1199,19 +1299,19 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
           boxShadow: '0 1px 3px 0 rgba(0, 0, 0, 0.05)',
         }}
       >
-        <Container maxWidth="xl">
+        <Container maxWidth="xl" sx={{ px: { xs: 1.5, sm: 3, md: 4 } }}>
           <Box
             sx={{
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
-              py: 1.5,
-              gap: 2,
+              py: { xs: 1.2, sm: 1.5 },
+              gap: { xs: 1, sm: 2 },
               flexWrap: 'wrap',
             }}
           >
             {/* Brand Lockup + Admin Badge */}
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.8 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: { xs: 1, sm: 1.8 } }}>
               <Box
                 onClick={onBack}
                 sx={{
@@ -1222,30 +1322,31 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                   '&:hover': onBack ? { opacity: 0.88 } : undefined,
                 }}
               >
-                <GlobalDreamVillageLogo size={40} />
+                <GlobalDreamVillageLogo size={38} />
               </Box>
 
               <Box
                 sx={{
                   display: 'inline-flex',
                   alignItems: 'center',
-                  gap: 0.7,
-                  px: 1.4,
-                  py: 0.5,
+                  gap: 0.6,
+                  px: { xs: 1, sm: 1.4 },
+                  py: 0.4,
                   borderRadius: '999px',
                   backgroundColor: '#E6F0FA',
                   border: '1px solid #BAE0FF',
                   color: '#004B8C',
                 }}
               >
-                <AdminPanelSettings sx={{ fontSize: 18 }} />
+                <AdminPanelSettings sx={{ fontSize: { xs: 15, sm: 18 } }} />
                 <Typography
                   sx={{
-                    fontSize: '12px',
+                    fontSize: { xs: '10.5px', sm: '12px' },
                     fontWeight: 700,
-                    letterSpacing: '0.6px',
+                    letterSpacing: '0.5px',
                     textTransform: 'uppercase',
                     fontFamily: "'Poppins', sans-serif",
+                    whiteSpace: 'nowrap',
                   }}
                 >
                   Admin Console
@@ -1254,21 +1355,23 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
             </Box>
 
             {/* Navigation & Actions */}
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: { xs: 0.8, sm: 1.5 }, ml: 'auto' }}>
               <Tooltip title="Refresh Listings">
                 <IconButton
                   onClick={handleManualRefresh}
                   disabled={refreshing}
+                  size="small"
                   sx={{
                     color: '#004B8C',
                     backgroundColor: '#F0F7FF',
                     border: '1px solid #E0E7FF',
+                    p: { xs: 0.8, sm: 1 },
                     '&:hover': { backgroundColor: '#E0F2FE' },
                   }}
                 >
                   <Refresh
                     sx={{
-                      fontSize: 20,
+                      fontSize: { xs: 18, sm: 20 },
                       animation: refreshing ? 'spin 1s linear infinite' : 'none',
                       '@keyframes spin': {
                         '0%': { transform: 'rotate(0deg)' },
@@ -1283,16 +1386,17 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                 <Button
                   variant="outlined"
                   onClick={onBack}
-                  startIcon={<ArrowBack />}
+                  startIcon={<ArrowBack sx={{ fontSize: { xs: '16px !important', sm: '18px !important' } }} />}
                   sx={{
                     color: '#004B8C',
                     borderColor: '#BAE0FF',
                     textTransform: 'none',
                     fontWeight: 600,
-                    fontSize: '13.5px',
+                    fontSize: { xs: '12.5px', sm: '13.5px' },
                     borderRadius: '10px',
-                    px: 2,
-                    py: 0.8,
+                    px: { xs: 1.2, sm: 2 },
+                    py: { xs: 0.6, sm: 0.8 },
+                    minWidth: 'auto',
                     fontFamily: "'Poppins', sans-serif",
                     '&:hover': {
                       borderColor: '#004B8C',
@@ -1313,10 +1417,11 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                   color: '#FFFFFF',
                   textTransform: 'none',
                   fontWeight: 600,
-                  fontSize: '14px',
+                  fontSize: { xs: '12.5px', sm: '14px' },
                   borderRadius: '10px',
-                  px: 2.5,
-                  py: 0.9,
+                  px: { xs: 1.5, sm: 2.5 },
+                  py: { xs: 0.7, sm: 0.9 },
+                  whiteSpace: 'nowrap',
                   boxShadow: '0 4px 12px rgba(0, 75, 140, 0.25)',
                   fontFamily: "'Poppins', sans-serif",
                   '&:hover': {
@@ -1325,7 +1430,8 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                   },
                 }}
               >
-                Add New Property
+                <Box component="span" sx={{ display: { xs: 'none', sm: 'inline' } }}>Add New Property</Box>
+                <Box component="span" sx={{ display: { xs: 'inline', sm: 'none' } }}>Add Property</Box>
               </Button>
             </Box>
           </Box>
@@ -1333,18 +1439,19 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
       </Box>
 
       {/* Main Container */}
-      <Container maxWidth="xl" sx={{ py: 4 }}>
+      <Container maxWidth="xl" sx={{ py: { xs: 2, sm: 3, md: 4 }, px: { xs: 1.5, sm: 3, md: 4 } }}>
         {/* Header Title Section */}
-        <Box sx={{ mb: 4 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, mb: 0.5 }}>
-            <AdminPanelSettings sx={{ color: '#004B8C', fontSize: 32 }} />
+        <Box sx={{ mb: { xs: 2.5, sm: 4 } }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: { xs: 1, sm: 1.5 }, mb: 0.5 }}>
+            <AdminPanelSettings sx={{ color: '#004B8C', fontSize: { xs: 26, sm: 32 } }} />
             <Typography
               variant="h4"
               sx={{
                 fontWeight: 800,
                 color: '#0F172A',
-                fontSize: { xs: '24px', sm: '28px' },
+                fontSize: { xs: '20px', sm: '25px', md: '28px' },
                 fontFamily: "'Poppins', sans-serif",
+                lineHeight: 1.25,
               }}
             >
               Property Management Console
@@ -1354,7 +1461,7 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
             variant="body1"
             sx={{
               color: '#64748B',
-              fontSize: '14.5px',
+              fontSize: { xs: '13px', sm: '14.5px' },
               fontFamily: "'Poppins', sans-serif",
             }}
           >
@@ -1362,34 +1469,36 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
           </Typography>
         </Box>
 
-        {/* Stats Overview Banner (4 KPI Cards) */}
+        {/* Stats Overview Banner (4 KPI Cards - 2x2 on Mobile/Tablet, 4x1 on Desktop) */}
         <Box
           sx={{
             display: 'grid',
-            gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr', lg: 'repeat(4, 1fr)' },
-            gap: 2.5,
-            mb: 4,
+            gridTemplateColumns: { xs: 'repeat(2, 1fr)', sm: 'repeat(2, 1fr)', lg: 'repeat(4, 1fr)' },
+            gap: { xs: 1.2, sm: 2, md: 2.5 },
+            mb: { xs: 2.5, sm: 4 },
           }}
         >
           {/* Card 1: Total Listings */}
           <Paper
             elevation={0}
             sx={{
-              p: 2.5,
-              borderRadius: '16px',
+              p: { xs: 1.5, sm: 2.5 },
+              borderRadius: { xs: '12px', sm: '16px' },
               border: '1px solid #E2E8F0',
               backgroundColor: '#FFFFFF',
               boxShadow: '0 2px 8px rgba(0, 0, 0, 0.03)',
               display: 'flex',
               alignItems: 'center',
-              gap: 2,
+              gap: { xs: 1.2, sm: 2 },
+              minWidth: 0,
             }}
           >
             <Box
               sx={{
-                width: 52,
-                height: 52,
-                borderRadius: '12px',
+                width: { xs: 40, sm: 52 },
+                height: { xs: 40, sm: 52 },
+                flexShrink: 0,
+                borderRadius: { xs: '10px', sm: '12px' },
                 backgroundColor: '#E6F0FA',
                 display: 'flex',
                 alignItems: 'center',
@@ -1397,13 +1506,13 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                 color: '#004B8C',
               }}
             >
-              <HomeWork sx={{ fontSize: 28 }} />
+              <HomeWork sx={{ fontSize: { xs: 22, sm: 28 } }} />
             </Box>
-            <Box>
-              <Typography variant="caption" sx={{ color: '#64748B', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+            <Box sx={{ minWidth: 0 }}>
+              <Typography variant="caption" sx={{ color: '#64748B', fontWeight: 600, fontSize: { xs: '10px', sm: '11.5px' }, textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block' }} noWrap>
                 Total Properties
               </Typography>
-              <Typography variant="h5" sx={{ fontWeight: 800, color: '#0F172A', fontFamily: "'Poppins', sans-serif" }}>
+              <Typography variant="h5" sx={{ fontWeight: 800, color: '#0F172A', fontSize: { xs: '18px', sm: '24px' }, fontFamily: "'Poppins', sans-serif" }}>
                 {totalListings}
               </Typography>
             </Box>
@@ -1413,21 +1522,23 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
           <Paper
             elevation={0}
             sx={{
-              p: 2.5,
-              borderRadius: '16px',
+              p: { xs: 1.5, sm: 2.5 },
+              borderRadius: { xs: '12px', sm: '16px' },
               border: '1px solid #E2E8F0',
               backgroundColor: '#FFFFFF',
               boxShadow: '0 2px 8px rgba(0, 0, 0, 0.03)',
               display: 'flex',
               alignItems: 'center',
-              gap: 2,
+              gap: { xs: 1.2, sm: 2 },
+              minWidth: 0,
             }}
           >
             <Box
               sx={{
-                width: 52,
-                height: 52,
-                borderRadius: '12px',
+                width: { xs: 40, sm: 52 },
+                height: { xs: 40, sm: 52 },
+                flexShrink: 0,
+                borderRadius: { xs: '10px', sm: '12px' },
                 backgroundColor: '#E0F2FE',
                 display: 'flex',
                 alignItems: 'center',
@@ -1435,13 +1546,13 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                 color: '#0284C7',
               }}
             >
-              <LocationOn sx={{ fontSize: 28 }} />
+              <LocationOn sx={{ fontSize: { xs: 22, sm: 28 } }} />
             </Box>
-            <Box>
-              <Typography variant="caption" sx={{ color: '#64748B', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+            <Box sx={{ minWidth: 0 }}>
+              <Typography variant="caption" sx={{ color: '#64748B', fontWeight: 600, fontSize: { xs: '10px', sm: '11.5px' }, textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block' }} noWrap>
                 Destinations
               </Typography>
-              <Typography variant="h5" sx={{ fontWeight: 800, color: '#0F172A', fontFamily: "'Poppins', sans-serif" }}>
+              <Typography variant="h5" sx={{ fontWeight: 800, color: '#0F172A', fontSize: { xs: '18px', sm: '24px' }, fontFamily: "'Poppins', sans-serif" }} noWrap>
                 {uniqueCities} {uniqueCities === 1 ? 'City' : 'Cities'}
               </Typography>
             </Box>
@@ -1451,21 +1562,23 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
           <Paper
             elevation={0}
             sx={{
-              p: 2.5,
-              borderRadius: '16px',
+              p: { xs: 1.5, sm: 2.5 },
+              borderRadius: { xs: '12px', sm: '16px' },
               border: '1px solid #E2E8F0',
               backgroundColor: '#FFFFFF',
               boxShadow: '0 2px 8px rgba(0, 0, 0, 0.03)',
               display: 'flex',
               alignItems: 'center',
-              gap: 2,
+              gap: { xs: 1.2, sm: 2 },
+              minWidth: 0,
             }}
           >
             <Box
               sx={{
-                width: 52,
-                height: 52,
-                borderRadius: '12px',
+                width: { xs: 40, sm: 52 },
+                height: { xs: 40, sm: 52 },
+                flexShrink: 0,
+                borderRadius: { xs: '10px', sm: '12px' },
                 backgroundColor: '#ECFDF5',
                 display: 'flex',
                 alignItems: 'center',
@@ -1473,14 +1586,14 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                 color: '#059669',
               }}
             >
-              <Payments sx={{ fontSize: 28 }} />
+              <Payments sx={{ fontSize: { xs: 22, sm: 28 } }} />
             </Box>
-            <Box>
-              <Typography variant="caption" sx={{ color: '#64748B', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+            <Box sx={{ minWidth: 0 }}>
+              <Typography variant="caption" sx={{ color: '#64748B', fontWeight: 600, fontSize: { xs: '10px', sm: '11.5px' }, textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block' }} noWrap>
                 Average Rate
               </Typography>
-              <Typography variant="h5" sx={{ fontWeight: 800, color: '#0F172A', fontFamily: "'Poppins', sans-serif" }}>
-                ₹{avgPrice.toLocaleString('en-IN')} <span style={{ fontSize: '13px', fontWeight: 500, color: '#64748B' }}>/ night</span>
+              <Typography variant="h5" sx={{ fontWeight: 800, color: '#0F172A', fontSize: { xs: '16px', sm: '22px' }, fontFamily: "'Poppins', sans-serif" }} noWrap>
+                ₹{avgPrice.toLocaleString('en-IN')} <span style={{ fontSize: '11.5px', fontWeight: 500, color: '#64748B' }}>/ night</span>
               </Typography>
             </Box>
           </Paper>
@@ -1489,21 +1602,23 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
           <Paper
             elevation={0}
             sx={{
-              p: 2.5,
-              borderRadius: '16px',
+              p: { xs: 1.5, sm: 2.5 },
+              borderRadius: { xs: '12px', sm: '16px' },
               border: '1px solid #E2E8F0',
               backgroundColor: '#FFFFFF',
               boxShadow: '0 2px 8px rgba(0, 0, 0, 0.03)',
               display: 'flex',
               alignItems: 'center',
-              gap: 2,
+              gap: { xs: 1.2, sm: 2 },
+              minWidth: 0,
             }}
           >
             <Box
               sx={{
-                width: 52,
-                height: 52,
-                borderRadius: '12px',
+                width: { xs: 40, sm: 52 },
+                height: { xs: 40, sm: 52 },
+                flexShrink: 0,
+                borderRadius: { xs: '10px', sm: '12px' },
                 backgroundColor: '#F3E8FF',
                 display: 'flex',
                 alignItems: 'center',
@@ -1511,14 +1626,14 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                 color: '#7E22CE',
               }}
             >
-              <People sx={{ fontSize: 28 }} />
+              <People sx={{ fontSize: { xs: 22, sm: 28 } }} />
             </Box>
-            <Box>
-              <Typography variant="caption" sx={{ color: '#64748B', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                Total Guest Capacity
+            <Box sx={{ minWidth: 0 }}>
+              <Typography variant="caption" sx={{ color: '#64748B', fontWeight: 600, fontSize: { xs: '10px', sm: '11.5px' }, textTransform: 'uppercase', letterSpacing: '0.4px', display: 'block' }} noWrap>
+                Guest Capacity
               </Typography>
-              <Typography variant="h5" sx={{ fontWeight: 800, color: '#0F172A', fontFamily: "'Poppins', sans-serif" }}>
-                {totalGuests} <span style={{ fontSize: '13px', fontWeight: 500, color: '#64748B' }}>Guests</span>
+              <Typography variant="h5" sx={{ fontWeight: 800, color: '#0F172A', fontSize: { xs: '18px', sm: '24px' }, fontFamily: "'Poppins', sans-serif" }} noWrap>
+                {totalGuests} <span style={{ fontSize: '12px', fontWeight: 500, color: '#64748B' }}>Guests</span>
               </Typography>
             </Box>
           </Paper>
@@ -1528,11 +1643,12 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
         <Paper
           elevation={0}
           sx={{
-            p: { xs: 2.5, sm: 3.5 },
-            borderRadius: '20px',
+            p: { xs: 1.5, sm: 2.5, md: 3.5 },
+            borderRadius: { xs: '14px', sm: '20px' },
             border: '1px solid #E2E8F0',
             backgroundColor: '#FFFFFF',
             boxShadow: '0 4px 20px rgba(0, 75, 140, 0.04)',
+            overflow: 'hidden',
           }}
         >
           {/* Toolbar: Search + Property Type Filter + Count */}
@@ -1541,9 +1657,9 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
               display: 'flex',
               justifyContent: 'space-between',
               alignItems: 'center',
-              mb: 3,
+              mb: { xs: 2, sm: 3 },
               flexWrap: 'wrap',
-              gap: 2,
+              gap: { xs: 1.5, sm: 2 },
             }}
           >
             {/* Search Input */}
@@ -1553,7 +1669,7 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
               onChange={(e) => setSearchQuery(e.target.value)}
               size="small"
               sx={{
-                width: { xs: '100%', sm: '420px' },
+                width: { xs: '100%', md: '360px', lg: '420px' },
                 '& .MuiOutlinedInput-root': {
                   borderRadius: '12px',
                   backgroundColor: '#F8FAFC',
@@ -1583,9 +1699,23 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
             />
 
             {/* Filters (Status & Type) + Counter */}
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
-              {/* Status Filter Tabs */}
-              <Box sx={{ display: 'flex', backgroundColor: '#F1F5F9', p: 0.5, borderRadius: '10px', border: '1px solid #E2E8F0' }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: { xs: 1, sm: 1.5 }, flexWrap: 'wrap', width: { xs: '100%', md: 'auto' }, minWidth: 0 }}>
+              {/* Status Filter Tabs (Horizontally Swipeable on Mobile/Tablet) */}
+              <Box
+                sx={{
+                  display: 'flex',
+                  backgroundColor: '#F1F5F9',
+                  p: 0.5,
+                  borderRadius: '10px',
+                  border: '1px solid #E2E8F0',
+                  overflowX: 'auto',
+                  maxWidth: '100%',
+                  WebkitOverflowScrolling: 'touch',
+                  scrollbarWidth: 'none',
+                  '&::-webkit-scrollbar': { display: 'none' },
+                  '& .MuiButton-root': { flexShrink: 0, whiteSpace: 'nowrap' },
+                }}
+              >
                 <Button
                   size="small"
                   onClick={() => setSelectedStatusFilter('all')}
@@ -1691,7 +1821,7 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
               </Box>
 
               {/* Admin Bulk Status Controls: Make All Active / Make All Inactive */}
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap', width: { xs: '100%', sm: 'auto' } }}>
                 <Button
                   size="small"
                   variant="outlined"
@@ -1705,6 +1835,7 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                     )
                   }
                   sx={{
+                    flex: { xs: 1, sm: 'initial' },
                     px: 1.5,
                     py: 0.6,
                     fontSize: '12px',
@@ -1714,6 +1845,7 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                     borderColor: '#86EFAC',
                     backgroundColor: '#F0FDF4',
                     color: '#15803D',
+                    whiteSpace: 'nowrap',
                     fontFamily: "'Poppins', sans-serif",
                     '&:hover': {
                       backgroundColor: '#DCFCE7',
@@ -1737,6 +1869,7 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                     )
                   }
                   sx={{
+                    flex: { xs: 1, sm: 'initial' },
                     px: 1.5,
                     py: 0.6,
                     fontSize: '12px',
@@ -1746,6 +1879,7 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                     borderColor: '#CBD5E1',
                     backgroundColor: '#F8FAFC',
                     color: '#475569',
+                    whiteSpace: 'nowrap',
                     fontFamily: "'Poppins', sans-serif",
                     '&:hover': {
                       backgroundColor: '#F1F5F9',
@@ -1757,57 +1891,59 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                 </Button>
               </Box>
 
-              {/* Property Type Dropdown */}
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                <FilterList sx={{ color: '#64748B', fontSize: 20 }} />
-                <TextField
-                  select
-                  size="small"
-                  value={selectedType}
-                  onChange={(e) => setSelectedType(e.target.value)}
-                  SelectProps={{ native: true }}
-                  sx={{
-                    '& .MuiOutlinedInput-root': {
-                      borderRadius: '12px',
-                      backgroundColor: '#F8FAFC',
-                      '& fieldset': { borderColor: '#E2E8F0' },
-                      '&:hover fieldset': { borderColor: '#004B8C' },
-                      '&.Mui-focused fieldset': { borderColor: '#004B8C' },
-                    },
-                    '& select': {
-                      fontSize: '13px',
-                      fontFamily: "'Poppins', sans-serif",
-                      fontWeight: 600,
-                      py: 0.8,
-                    },
-                  }}
-                >
-                  {PROPERTY_TYPES.map((pt) => (
-                    <option key={pt.value} value={pt.value}>
-                      {pt.label}
-                    </option>
-                  ))}
-                </TextField>
-              </Box>
+              {/* Property Type Dropdown & Count */}
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 1, width: { xs: '100%', sm: 'auto' } }}>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.8 }}>
+                  <FilterList sx={{ color: '#64748B', fontSize: 20 }} />
+                  <TextField
+                    select
+                    size="small"
+                    value={selectedType}
+                    onChange={(e) => setSelectedType(e.target.value)}
+                    SelectProps={{ native: true }}
+                    sx={{
+                      '& .MuiOutlinedInput-root': {
+                        borderRadius: '12px',
+                        backgroundColor: '#F8FAFC',
+                        '& fieldset': { borderColor: '#E2E8F0' },
+                        '&:hover fieldset': { borderColor: '#004B8C' },
+                        '&.Mui-focused fieldset': { borderColor: '#004B8C' },
+                      },
+                      '& select': {
+                        fontSize: '13px',
+                        fontFamily: "'Poppins', sans-serif",
+                        fontWeight: 600,
+                        py: 0.8,
+                      },
+                    }}
+                  >
+                    {PROPERTY_TYPES.map((pt) => (
+                      <option key={pt.value} value={pt.value}>
+                        {pt.label}
+                      </option>
+                    ))}
+                  </TextField>
+                </Box>
 
-              <Chip
-                label={`Showing ${filteredVillas.length} of ${villas.length}`}
-                size="small"
-                sx={{
-                  backgroundColor: '#E6F0FA',
-                  color: '#004B8C',
-                  fontWeight: 600,
-                  fontSize: '12px',
-                  borderRadius: '8px',
-                  fontFamily: "'Poppins', sans-serif",
-                }}
-              />
+                <Chip
+                  label={`Showing ${filteredVillas.length} of ${villas.length}`}
+                  size="small"
+                  sx={{
+                    backgroundColor: '#E6F0FA',
+                    color: '#004B8C',
+                    fontWeight: 600,
+                    fontSize: '12px',
+                    borderRadius: '8px',
+                    fontFamily: "'Poppins', sans-serif",
+                  }}
+                />
+              </Box>
             </Box>
           </Box>
 
-          {/* Table or Empty / Loading States */}
+          {/* Table / Mobile Cards or Empty / Loading States */}
           {loading ? (
-            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', py: 10 }}>
+            <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', py: 8 }}>
               <CircularProgress sx={{ color: '#004B8C', mb: 2 }} />
               <Typography variant="body2" sx={{ color: '#64748B', fontFamily: "'Poppins', sans-serif" }}>
                 Loading property listings...
@@ -1829,6 +1965,7 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
               sx={{
                 textAlign: 'center',
                 py: 8,
+                px: 2,
                 backgroundColor: '#F8FAFC',
                 borderRadius: '16px',
                 border: '1px dashed #CBD5E1',
@@ -1857,8 +1994,363 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
               </Button>
             </Box>
           ) : (
-            <TableContainer sx={{ borderRadius: '12px', border: '1px solid #E2E8F0' }}>
-              <Table sx={{ minWidth: 700 }}>
+            <>
+              {/* Mobile & Tablet Card View (< 900px) */}
+              <Box sx={{ display: { xs: 'flex', md: 'none' }, flexDirection: 'column', gap: 2 }}>
+                {filteredVillas.map((villa) => {
+                  const imageUrl = villa.image || (villa.images && villa.images[0]) || '';
+                  const typeStyle = getTypeChipColor(villa.type);
+                  const amenitiesList = (villa.amenities || []).map((a: any) => (typeof a === 'string' ? a : a.name));
+                  const rawStatus = String(villa.status || 'active').toLowerCase();
+                  const isActive = rawStatus === 'active';
+                  const isBlocked = rawStatus === 'blocked';
+                  const isUpdating = statusUpdatingId === String(villa.id || (villa as any).villaId);
+                  const isPendingReview = rawStatus === 'pending_verification' || rawStatus === 'pending_approval';
+                  const awaitingKyc = rawStatus === 'pending_verification';
+
+                  return (
+                    <Paper
+                      key={`mobile-card-${villa.id}`}
+                      elevation={0}
+                      sx={{
+                        p: { xs: 1.8, sm: 2.2 },
+                        borderRadius: '14px',
+                        border: '1px solid #E2E8F0',
+                        backgroundColor: '#FFFFFF',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 1.5,
+                        boxShadow: '0 2px 6px rgba(15, 23, 42, 0.03)',
+                      }}
+                    >
+                      {/* Top Row: Thumbnail + Title, Location, Type & Price */}
+                      <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'flex-start' }}>
+                        <Box
+                          sx={{
+                            width: { xs: 84, sm: 100 },
+                            height: { xs: 72, sm: 80 },
+                            borderRadius: '10px',
+                            overflow: 'hidden',
+                            backgroundColor: '#E2E8F0',
+                            border: '1px solid #CBD5E1',
+                            flexShrink: 0,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          {imageUrl ? (
+                            <img
+                              src={getOptimizedImageUrl(imageUrl, 160)}
+                              alt={villa.name}
+                              loading="lazy"
+                              decoding="async"
+                              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                              onError={(e: any) => {
+                                if (e.target.src !== FALLBACK_VILLA_IMAGE) {
+                                  e.target.src = FALLBACK_VILLA_IMAGE;
+                                }
+                              }}
+                            />
+                          ) : (
+                            <HomeWork sx={{ color: '#94A3B8', fontSize: 26 }} />
+                          )}
+                        </Box>
+
+                        <Box sx={{ flex: 1, minWidth: 0 }}>
+                          <Box sx={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 1 }}>
+                            <Typography
+                              sx={{
+                                fontWeight: 700,
+                                color: '#0F172A',
+                                fontSize: { xs: '14px', sm: '15.5px' },
+                                fontFamily: "'Poppins', sans-serif",
+                                lineHeight: 1.3,
+                              }}
+                            >
+                              {villa.title || villa.name}
+                            </Typography>
+                            <Box
+                              sx={{
+                                flexShrink: 0,
+                                px: 1,
+                                py: 0.2,
+                                borderRadius: '999px',
+                                backgroundColor: typeStyle.bg,
+                                color: typeStyle.color,
+                                border: `1px solid ${typeStyle.border}`,
+                                fontSize: '10.5px',
+                                fontWeight: 700,
+                                textTransform: 'capitalize',
+                              }}
+                            >
+                              {villa.type || 'Villa'}
+                            </Box>
+                          </Box>
+
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.4, mt: 0.3 }}>
+                            <LocationOn sx={{ fontSize: 14, color: '#004B8C', flexShrink: 0 }} />
+                            <Typography
+                              variant="caption"
+                              sx={{ color: '#64748B', fontSize: '12px', fontFamily: "'Poppins', sans-serif" }}
+                              noWrap
+                            >
+                              {villa.location || villa.city || 'Global Village'}
+                            </Typography>
+                          </Box>
+
+                          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1, mt: 0.8 }}>
+                            <Box
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleCopyId(String(villa.id || (villa as any).villaId));
+                              }}
+                              sx={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: 0.5,
+                                px: 0.8,
+                                py: 0.2,
+                                borderRadius: '6px',
+                                backgroundColor: '#F1F5F9',
+                                border: '1px solid #E2E8F0',
+                                cursor: 'pointer',
+                              }}
+                            >
+                              <Typography sx={{ fontSize: '10.5px', fontFamily: 'monospace', fontWeight: 700, color: '#004B8C' }}>
+                                ID: {String(villa.id || (villa as any).villaId)}
+                              </Typography>
+                              {copiedId === String(villa.id || (villa as any).villaId) ? (
+                                <Check sx={{ fontSize: 12, color: '#16A34A' }} />
+                              ) : (
+                                <ContentCopy sx={{ fontSize: 11, color: '#64748B' }} />
+                              )}
+                            </Box>
+
+                            <Typography sx={{ fontWeight: 800, color: '#004B8C', fontSize: '14.5px', fontFamily: "'Poppins', sans-serif" }}>
+                              ₹{(villa.pricePerNight || villa.price || 0).toLocaleString('en-IN')}
+                              <span style={{ fontSize: '11px', fontWeight: 500, color: '#64748B' }}> / night</span>
+                            </Typography>
+                          </Box>
+                        </Box>
+                      </Box>
+
+                      {/* Capacity & Amenities Strip */}
+                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1, pt: 1, borderTop: '1px solid #F1F5F9' }}>
+                        <Typography sx={{ fontSize: '12px', fontWeight: 600, color: '#334155', fontFamily: "'Poppins', sans-serif" }}>
+                          {villa.guests || 1} Guests · {villa.bedrooms || 1} Beds · {villa.bathrooms || 1} Baths
+                        </Typography>
+                        {amenitiesList.length > 0 && (
+                          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5 }}>
+                            {amenitiesList.slice(0, 2).map((a, i) => (
+                              <Chip key={i} label={a} size="small" sx={{ fontSize: '10.5px', height: '20px', backgroundColor: '#F1F5F9', color: '#475569' }} />
+                            ))}
+                            {amenitiesList.length > 2 && (
+                              <Chip label={`+${amenitiesList.length - 2}`} size="small" sx={{ fontSize: '10px', height: '20px', backgroundColor: '#E0F2FE', color: '#0369A1', fontWeight: 700 }} />
+                            )}
+                          </Box>
+                        )}
+                      </Box>
+
+                      {/* Owner / Host Compact Strip */}
+                      <Box
+                        onClick={() => (villa.host || villa.hostId) && setViewOwnerVilla(villa)}
+                        sx={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 1,
+                          p: 1,
+                          borderRadius: '10px',
+                          backgroundColor: '#F8FAFC',
+                          border: '1px solid #E2E8F0',
+                          cursor: villa.host || villa.hostId ? 'pointer' : 'default',
+                        }}
+                      >
+                        {villa.host || villa.hostId ? (
+                          <>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+                              <Avatar
+                                src={villa.host?.avatar || ''}
+                                sx={{ width: 28, height: 28, backgroundColor: '#004B8C', fontSize: '12px', fontWeight: 700 }}
+                              >
+                                {(villa.host?.name || villa.host?.firstName || 'O').charAt(0).toUpperCase()}
+                              </Avatar>
+                              <Box sx={{ minWidth: 0 }}>
+                                <Typography sx={{ fontWeight: 700, fontSize: '12.5px', color: '#0F172A', lineHeight: 1.2 }} noWrap>
+                                  {villa.host?.name || (villa.host?.firstName ? `${villa.host?.firstName} ${villa.host?.lastName || ''}`.trim() : `Host #${villa.hostId}`)}
+                                </Typography>
+                                <Typography sx={{ fontSize: '11px', color: '#64748B' }} noWrap>
+                                  {villa.host?.email || villa.host?.phone || 'Tap to view owner details'}
+                                </Typography>
+                              </Box>
+                            </Box>
+                            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.6, flexShrink: 0 }}>
+                              {villa.host && villa.host.identityVerified !== undefined && (
+                                <Chip
+                                  size="small"
+                                  label={villa.host.identityVerified ? 'ID verified' : 'Unverified'}
+                                  sx={{
+                                    height: 20,
+                                    fontSize: '10px',
+                                    fontWeight: 700,
+                                    backgroundColor: villa.host.identityVerified ? '#DCFCE7' : '#FEF3C7',
+                                    color: villa.host.identityVerified ? '#166534' : '#92400E',
+                                  }}
+                                />
+                              )}
+                              <Visibility sx={{ fontSize: 16, color: '#004B8C' }} />
+                            </Box>
+                          </>
+                        ) : (
+                          <Typography sx={{ fontSize: '11.5px', fontWeight: 600, color: '#64748B' }}>Platform Managed Listing</Typography>
+                        )}
+                      </Box>
+
+                      {/* Bottom Row: Status Governance + Edit/Delete Actions */}
+                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 1, pt: 0.5 }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0.8 }}>
+                          {isPendingReview || rawStatus === 'rejected' ? (
+                            <>
+                              <Box
+                                sx={{
+                                  px: 1.1,
+                                  py: 0.3,
+                                  borderRadius: '999px',
+                                  backgroundColor: rawStatus === 'rejected' ? '#FEF2F2' : awaitingKyc ? '#FFFBEB' : '#EFF6FF',
+                                  border: `1px solid ${rawStatus === 'rejected' ? '#FCA5A5' : awaitingKyc ? '#FDE68A' : '#BFDBFE'}`,
+                                }}
+                              >
+                                <Typography
+                                  sx={{
+                                    fontSize: '11px',
+                                    fontWeight: 700,
+                                    textTransform: 'uppercase',
+                                    color: rawStatus === 'rejected' ? '#B91C1C' : awaitingKyc ? '#92400E' : '#1D4ED8',
+                                  }}
+                                >
+                                  {rawStatus === 'rejected' ? 'Rejected' : awaitingKyc ? 'Awaiting ID' : 'Pending'}
+                                </Typography>
+                              </Box>
+                              {rawStatus !== 'rejected' && (
+                                <>
+                                  <Button
+                                    size="small"
+                                    variant="contained"
+                                    onClick={() => handleOpenReview(villa, 'approve')}
+                                    sx={{ fontSize: '11px', fontWeight: 700, textTransform: 'none', py: 0.3, px: 1.2, borderRadius: '8px', backgroundColor: '#16A34A', '&:hover': { backgroundColor: '#15803D' } }}
+                                  >
+                                    Approve
+                                  </Button>
+                                  <Button
+                                    size="small"
+                                    onClick={() => handleOpenReview(villa, 'reject')}
+                                    sx={{ fontSize: '11px', fontWeight: 700, textTransform: 'none', py: 0.3, px: 1, borderRadius: '8px', color: '#DC2626', backgroundColor: '#FEF2F2' }}
+                                  >
+                                    Reject
+                                  </Button>
+                                </>
+                              )}
+                            </>
+                          ) : (
+                            <>
+                              <Box
+                                onClick={() => !isUpdating && handleToggleStatus(villa)}
+                                sx={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                  gap: 0.6,
+                                  px: 1.2,
+                                  py: 0.4,
+                                  borderRadius: '999px',
+                                  cursor: isUpdating ? 'wait' : 'pointer',
+                                  backgroundColor: isBlocked ? '#FEF2F2' : isActive ? '#DCFCE7' : '#F1F5F9',
+                                  border: `1px solid ${isBlocked ? '#FCA5A5' : isActive ? '#86EFAC' : '#CBD5E1'}`,
+                                }}
+                              >
+                                {isUpdating ? (
+                                  <CircularProgress size={13} sx={{ color: isActive ? '#16A34A' : '#475569' }} />
+                                ) : isBlocked ? (
+                                  <Block sx={{ fontSize: 14, color: '#DC2626' }} />
+                                ) : isActive ? (
+                                  <CheckCircle sx={{ fontSize: 14, color: '#16A34A' }} />
+                                ) : (
+                                  <ToggleOff sx={{ fontSize: 16, color: '#64748B' }} />
+                                )}
+                                <Typography
+                                  sx={{
+                                    fontSize: '11px',
+                                    fontWeight: 700,
+                                    color: isBlocked ? '#DC2626' : isActive ? '#15803D' : '#475569',
+                                    textTransform: 'uppercase',
+                                  }}
+                                >
+                                  {isBlocked ? 'Blocked' : isActive ? 'Active' : 'Inactive'}
+                                </Typography>
+                              </Box>
+                              <Button
+                                size="small"
+                                onClick={() => handleOpenBlockDialog(villa)}
+                                startIcon={isBlocked ? <LockOpen sx={{ fontSize: 13 }} /> : <Block sx={{ fontSize: 13 }} />}
+                                sx={{
+                                  fontSize: '11px',
+                                  fontWeight: 700,
+                                  textTransform: 'none',
+                                  py: 0.3,
+                                  px: 1,
+                                  borderRadius: '6px',
+                                  color: isBlocked ? '#004B8C' : '#DC2626',
+                                  backgroundColor: isBlocked ? '#E6F0FA' : '#FEF2F2',
+                                }}
+                              >
+                                {isBlocked ? 'Unblock' : 'Block'}
+                              </Button>
+                            </>
+                          )}
+                        </Box>
+
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.8, ml: 'auto' }}>
+                          <Button
+                            size="small"
+                            onClick={() => handleEditOpen(villa)}
+                            startIcon={<Edit sx={{ fontSize: 15 }} />}
+                            sx={{
+                              color: '#004B8C',
+                              backgroundColor: '#F0F7FF',
+                              border: '1px solid #BAE0FF',
+                              textTransform: 'none',
+                              fontWeight: 600,
+                              fontSize: '12px',
+                              borderRadius: '8px',
+                              px: 1.2,
+                              py: 0.4,
+                            }}
+                          >
+                            Edit
+                          </Button>
+                          <IconButton
+                            onClick={() => handleDeleteOpen(villa.id.toString(), villa.title || villa.name)}
+                            sx={{
+                              color: '#DC2626',
+                              backgroundColor: '#FEF2F2',
+                              border: '1px solid #FECACA',
+                              borderRadius: '8px',
+                              p: 0.6,
+                            }}
+                            size="small"
+                          >
+                            <Delete sx={{ fontSize: 17 }} />
+                          </IconButton>
+                        </Box>
+                      </Box>
+                    </Paper>
+                  );
+                })}
+              </Box>
+
+              {/* Desktop & Large Tablet Data Table (>= 900px) */}
+              <TableContainer sx={{ display: { xs: 'none', md: 'block' }, borderRadius: '12px', border: '1px solid #E2E8F0', overflowX: 'auto' }}>
+                <Table sx={{ minWidth: 860 }}>
                 <TableHead>
                   <TableRow sx={{ backgroundColor: '#F8FAFC' }}>
                     <TableCell sx={{ fontWeight: 700, color: '#475569', fontSize: '13px', py: 1.8, fontFamily: "'Poppins', sans-serif" }}>
@@ -2482,6 +2974,7 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                 </TableBody>
               </Table>
             </TableContainer>
+            </>
           )}
         </Paper>
       </Container>
@@ -2494,10 +2987,12 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
         maxWidth="md"
         PaperProps={{
           sx: {
-            maxHeight: '92vh',
+            m: { xs: 1, sm: 2 },
+            width: { xs: 'calc(100% - 16px)', sm: 'calc(100% - 32px)' },
+            maxHeight: { xs: '96vh', sm: '92vh' },
             display: 'flex',
             flexDirection: 'column',
-            borderRadius: '20px',
+            borderRadius: { xs: '14px', sm: '20px' },
             overflow: 'hidden',
             fontFamily: "'Poppins', sans-serif",
           },
@@ -2915,7 +3410,7 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                   <option value="GBP">GBP (£)</option>
                 </TextField>
               </Box>
-              <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr 1fr 1fr' }, gap: 2, mt: 2 }}>
+              <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr', md: 'repeat(4, 1fr)' }, gap: 2, mt: 2 }}>
                 <TextField
                   label="Bedrooms"
                   required={!editingVilla}
@@ -3300,7 +3795,7 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                 />
               </Box>
 
-              <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr 1fr 1fr' }, gap: 2, mt: 2 }}>
+              <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr', md: 'repeat(4, 1fr)' }, gap: 2, mt: 2 }}>
                 <TextField
                   label="Response Rate"
                   fullWidth

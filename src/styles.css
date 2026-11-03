@@ -392,3 +392,20 @@ code { background: #f1f5f9; padding: 1px 5px; border-radius: 4px; }
 .onboarding-wrap { flex: 1; width: 100%; min-width: 0; }
 .onboarding-root button, .onboarding-root input, .onboarding-root select, .onboarding-root textarea { font-family: inherit; }
 
+.onboarding-root { width: 100%; overflow-x: hidden; box-sizing: border-box; }
+
+@media (max-width: 900px) {
+  .topbar { padding: 8px 14px; }
+  .topbar nav { margin-left: 0; overflow-x: auto; max-width: 100%; scrollbar-width: none; }
+  .topbar nav::-webkit-scrollbar { display: none; }
+  .topbar .tab { white-space: nowrap; padding: 6px 12px; font-size: 13px; }
+  .who { flex-wrap: wrap; gap: 6px; }
+}
+
+@media (max-width: 600px) {
+  .topbar { padding: 8px 10px; gap: 6px; }
+  .logo-service-pill { display: none; }
+  .site-link-pill { display: none; }
+  .who { width: 100%; justify-content: space-between; margin-left: 0; padding-top: 6px; border-top: 1px solid #f1f5f9; font-size: 12px; order: 3; }
+  .topbar nav { order: 2; width: 100%; justify-content: flex-start; }
+}

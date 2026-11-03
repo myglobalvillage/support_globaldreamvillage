@@ -14,7 +14,8 @@ import { Team } from './Team'
 import { useToast } from './Toast'
 import { Workspace } from './Workspace'
 
-const OnboardingPanel = lazy(() => import('../onboarding/OnboardingPanel'))
+const loadOnboardingModule = () => import('../onboarding/OnboardingPanel')
+const OnboardingPanel = lazy(loadOnboardingModule)
 
 const PAGE_SIZE = 25
 
@@ -58,6 +59,27 @@ export function Shell({ me, onLogout }: { me: Me; onLogout: () => void }) {
   const known = useRef<{ key: string; ids: Set<string> } | null>(null)
   const isAdmin = me.role === 'admin'
   const canApproveRefunds = me.role === 'admin' || me.role === 'support_admin'
+  const [onboardingReady, setOnboardingReady] = useState(false)
+
+  const warmOnboarding = useCallback(() => {
+    if (!canApproveRefunds) return
+    loadOnboardingModule()
+      .then((mod: any) => {
+        if (typeof mod.prefetchOnboardingData === 'function') {
+          mod.prefetchOnboardingData()
+        }
+        setOnboardingReady(true)
+      })
+      .catch(() => {})
+  }, [canApproveRefunds])
+
+  useEffect(() => {
+    if (!canApproveRefunds) return
+    const timer = setTimeout(() => {
+      warmOnboarding()
+    }, 150)
+    return () => clearTimeout(timer)
+  }, [canApproveRefunds, warmOnboarding])
 
   useEffect(() => {
     if (!isAdmin && (view === 'analytics' || view === 'team')) {
@@ -65,6 +87,9 @@ export function Shell({ me, onLogout }: { me: Me; onLogout: () => void }) {
     }
     if (!canApproveRefunds && view === 'onboarding') {
       setView('queue')
+    }
+    if (canApproveRefunds && view === 'onboarding') {
+      setOnboardingReady(true)
     }
   }, [isAdmin, canApproveRefunds, view])
 
@@ -200,7 +225,17 @@ export function Shell({ me, onLogout }: { me: Me; onLogout: () => void }) {
           <button className={view === 'queue' ? 'tab active' : 'tab'} onClick={() => setView('queue')}>Queue</button>
           {isAdmin && <button className={view === 'analytics' ? 'tab active' : 'tab'} onClick={() => setView('analytics')}>Analytics</button>}
           {isAdmin && <button className={view === 'team' ? 'tab active' : 'tab'} onClick={() => setView('team')}>Team</button>}
-          {canApproveRefunds && <button id="tab-onboarding" className={view === 'onboarding' ? 'tab active' : 'tab'} onClick={() => setView('onboarding')}>Onboarding</button>}
+          {canApproveRefunds && (
+            <button
+              id="tab-onboarding"
+              className={view === 'onboarding' ? 'tab active' : 'tab'}
+              onMouseEnter={warmOnboarding}
+              onTouchStart={warmOnboarding}
+              onClick={() => setView('onboarding')}
+            >
+              Onboarding
+            </button>
+          )}
         </nav>
         <div className="who">
           <a
@@ -223,13 +258,21 @@ export function Shell({ me, onLogout }: { me: Me; onLogout: () => void }) {
             <span>{syncingMail ? 'Pulling Mail…' : 'Refresh Mail'}</span>
             {lastSyncTime && <span className="sync-badge">{lastSyncTime}</span>}
           </button>
-          <button className="btn ghost sm" title="Keyboard shortcuts" onClick={() => setShowHelp(true)}>⌨ ?</button>
+          <button className="btn ghost sm hide-mobile" title="Keyboard shortcuts" onClick={() => setShowHelp(true)}>⌨ ?</button>
           <span>{me.name} <em>{me.role.replace('_', ' ')}</em></span>
           <button className="btn ghost" onClick={onLogout}>Sign out</button>
         </div>
       </header>
 
-      {view === 'analytics' && isAdmin ? (
+      {canApproveRefunds && (onboardingReady || view === 'onboarding') && (
+        <div className="onboarding-wrap" style={{ display: view === 'onboarding' ? 'block' : 'none' }}>
+          <Suspense fallback={<div className="center pad"><div className="spinner" /></div>}>
+            <OnboardingPanel onBack={() => setView('queue')} />
+          </Suspense>
+        </div>
+      )}
+
+      {view === 'onboarding' && canApproveRefunds ? null : view === 'analytics' && isAdmin ? (
         <Analytics
           me={me}
           onDrillDown={params => {
@@ -243,13 +286,7 @@ export function Shell({ me, onLogout }: { me: Me; onLogout: () => void }) {
             }
           }}
         />
-      ) : view === 'team' && isAdmin ? <Team me={me} /> : view === 'onboarding' && canApproveRefunds ? (
-        <div className="onboarding-wrap">
-          <Suspense fallback={<div className="center pad"><div className="spinner" /></div>}>
-            <OnboardingPanel onBack={() => setView('queue')} />
-          </Suspense>
-        </div>
-      ) : (
+      ) : view === 'team' && isAdmin ? <Team me={me} /> : (
         <>
           {stats && (
             <section className="stats">
