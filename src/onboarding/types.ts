@@ -42,6 +42,10 @@ export interface Villa {
   reviewNote?: string | null;
   reviewedBy?: string | null;
   reviewedAt?: string | null;
+  verificationDeadline?: string | null;
+  verificationRemindersSent?: number;
+  lastVerificationReminderAt?: string | null;
+  daysRemaining?: number;
   host?: {
     userId?: string;
     id?: string;

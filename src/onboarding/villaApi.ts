@@ -80,6 +80,9 @@ export const villaAPI = {
   // Onboarding admins approve or reject a host's listing (approve requires host identity verification)
   reviewVilla: (villaId: string, decision: 'approve' | 'reject', note?: string) =>
     apiRequest(`${ENDPOINTS.BY_ID(villaId)}/review`, 'POST', { decision, note }),
+  // Trigger 2-day cadence verification reminder email & WhatsApp for 21-day pending host verification
+  sendVerificationReminder: (villaId: string) =>
+    apiRequest(`${ENDPOINTS.BY_ID(villaId)}/send-verification-reminder`, 'POST'),
   bulkUpdateStatus: (status: 'active' | 'inactive' | 'blocked', villaIds?: string[]) =>
     apiRequest(ENDPOINTS.BULK_STATUS, 'POST', { status, villaIds }),
 }

@@ -163,7 +163,7 @@ const persistBulkStatusOverrides = (villaIds: string[], status: string) => {
 };
 
 // Onboarding lifecycle states are owned by the server (host KYC -> admin approval)
-const ONBOARDING_REVIEW_STATUSES = ['pending_verification', 'pending_approval', 'rejected'];
+const ONBOARDING_REVIEW_STATUSES = ['pending_verification', 'pending_approval', 'rejected', 'verification_expired'];
 const isInOnboardingReview = (status?: string) =>
   ONBOARDING_REVIEW_STATUSES.includes(String(status || '').toLowerCase());
 
@@ -364,6 +364,46 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
     message: '',
     severity: 'success',
   });
+
+  const [remindingVillaId, setRemindingVillaId] = useState<string | null>(null);
+
+  const handleSendVerificationReminder = async (villa: Villa) => {
+    const vId = String(villa.id || (villa as any).villaId || (villa as any).villaid);
+    setRemindingVillaId(vId);
+    try {
+      const res = await villaAPI.sendVerificationReminder(vId);
+      if (res?.success) {
+        setToastSnackbar({
+          open: true,
+          message: res.message || 'Verification reminder sent to host via email and WhatsApp.',
+          severity: 'success',
+        });
+        setVillas((prev) =>
+          prev.map((item) => {
+            const itemId = String(item.id || (item as any).villaId || (item as any).villaid);
+            if (itemId === vId) {
+              return {
+                ...item,
+                verificationRemindersSent: (item.verificationRemindersSent || 0) + 1,
+                lastVerificationReminderAt: new Date().toISOString(),
+              };
+            }
+            return item;
+          })
+        );
+      } else {
+        throw new Error(res?.message || 'Failed to send verification reminder.');
+      }
+    } catch (err: any) {
+      setToastSnackbar({
+        open: true,
+        message: err.message || 'Failed to send verification reminder.',
+        severity: 'error',
+      });
+    } finally {
+      setRemindingVillaId(null);
+    }
+  };
 
   const handleCopyId = (id: string) => {
     if (!id) return;
@@ -1240,7 +1280,7 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
     const matchesStatus =
       selectedStatusFilter === 'all' ||
       (selectedStatusFilter === 'pending'
-        ? vStatus === 'pending_verification' || vStatus === 'pending_approval'
+        ? vStatus === 'pending_verification' || vStatus === 'pending_approval' || vStatus === 'verification_expired'
         : vStatus === selectedStatusFilter);
 
     return matchesSearch && matchesType && matchesStatus;
@@ -1253,7 +1293,7 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
   const blockedCount = villas.filter((v) => String(v.status || '').toLowerCase() === 'blocked').length;
   const pendingCount = villas.filter((v) => {
     const s = String(v.status || '').toLowerCase();
-    return s === 'pending_verification' || s === 'pending_approval';
+    return s === 'pending_verification' || s === 'pending_approval' || s === 'verification_expired';
   }).length;
   const rejectedCount = villas.filter((v) => String(v.status || '').toLowerCase() === 'rejected').length;
   const uniqueCities = new Set(
@@ -2005,8 +2045,14 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                   const isActive = rawStatus === 'active';
                   const isBlocked = rawStatus === 'blocked';
                   const isUpdating = statusUpdatingId === String(villa.id || (villa as any).villaId);
-                  const isPendingReview = rawStatus === 'pending_verification' || rawStatus === 'pending_approval';
+                  const isPendingReview = rawStatus === 'pending_verification' || rawStatus === 'pending_approval' || rawStatus === 'verification_expired';
                   const awaitingKyc = rawStatus === 'pending_verification';
+                  const isExpired = rawStatus === 'verification_expired';
+                  const daysRemaining = villa.verificationDeadline
+                    ? Math.max(0, Math.ceil((new Date(villa.verificationDeadline).getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
+                    : 21;
+                  const remindersSent = villa.verificationRemindersSent || 0;
+                  const isReminding = remindingVillaId === String(villa.id || (villa as any).villaId);
 
                   return (
                     <Paper
@@ -2217,8 +2263,8 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                                   px: 1.1,
                                   py: 0.3,
                                   borderRadius: '999px',
-                                  backgroundColor: rawStatus === 'rejected' ? '#FEF2F2' : awaitingKyc ? '#FFFBEB' : '#EFF6FF',
-                                  border: `1px solid ${rawStatus === 'rejected' ? '#FCA5A5' : awaitingKyc ? '#FDE68A' : '#BFDBFE'}`,
+                                  backgroundColor: rawStatus === 'rejected' || isExpired ? '#FEF2F2' : awaitingKyc ? '#FFFBEB' : '#EFF6FF',
+                                  border: `1px solid ${rawStatus === 'rejected' || isExpired ? '#FCA5A5' : awaitingKyc ? '#FDE68A' : '#BFDBFE'}`,
                                 }}
                               >
                                 <Typography
@@ -2226,13 +2272,41 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                                     fontSize: '11px',
                                     fontWeight: 700,
                                     textTransform: 'uppercase',
-                                    color: rawStatus === 'rejected' ? '#B91C1C' : awaitingKyc ? '#92400E' : '#1D4ED8',
+                                    color: rawStatus === 'rejected' || isExpired ? '#B91C1C' : awaitingKyc ? '#92400E' : '#1D4ED8',
                                   }}
                                 >
-                                  {rawStatus === 'rejected' ? 'Rejected' : awaitingKyc ? 'Awaiting ID' : 'Pending'}
+                                  {rawStatus === 'rejected' ? 'Rejected' : isExpired ? 'Window Expired' : awaitingKyc ? 'Awaiting ID' : 'Pending'}
                                 </Typography>
                               </Box>
-                              {rawStatus !== 'rejected' && (
+                              {awaitingKyc && (
+                                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.8, flexWrap: 'wrap' }}>
+                                  <Box sx={{ px: 0.8, py: 0.2, borderRadius: '6px', backgroundColor: daysRemaining <= 3 ? '#FEE2E2' : '#FEF3C7', color: daysRemaining <= 3 ? '#B91C1C' : '#92400E', fontSize: '10.5px', fontWeight: 700 }}>
+                                    ⏳ {daysRemaining}d left (21d)
+                                  </Box>
+                                  <Button
+                                    size="small"
+                                    variant="outlined"
+                                    disabled={isReminding}
+                                    onClick={() => handleSendVerificationReminder(villa)}
+                                    startIcon={isReminding ? <CircularProgress size={11} color="inherit" /> : <Email sx={{ fontSize: 13 }} />}
+                                    sx={{ fontSize: '10.5px', fontWeight: 700, textTransform: 'none', py: 0.2, px: 1, borderRadius: '6px', color: '#004B8C', borderColor: '#BAE0FF', backgroundColor: '#F0F7FF' }}
+                                  >
+                                    {isReminding ? 'Sending...' : remindersSent > 0 ? `Remind (${remindersSent})` : 'Remind Host'}
+                                  </Button>
+                                </Box>
+                              )}
+                              {isExpired && (
+                                <Button
+                                  size="small"
+                                  variant="outlined"
+                                  disabled={isReminding}
+                                  onClick={() => handleSendVerificationReminder(villa)}
+                                  sx={{ fontSize: '10.5px', fontWeight: 700, textTransform: 'none', py: 0.2, px: 1, borderRadius: '6px', color: '#B91C1C', borderColor: '#FCA5A5', backgroundColor: '#FEF2F2' }}
+                                >
+                                  {isReminding ? 'Sending...' : 'Send Reactivation Link'}
+                                </Button>
+                              )}
+                              {!awaitingKyc && !isExpired && rawStatus !== 'rejected' && (
                                 <>
                                   <Button
                                     size="small"
@@ -2710,9 +2784,15 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                             const isUpdating = statusUpdatingId === String(villa.id || (villa as any).villaId);
 
                             // Onboarding states are driven by the server: show the review actions instead of the toggle
-                            const isPendingReview = rawStatus === 'pending_verification' || rawStatus === 'pending_approval';
+                            const isPendingReview = rawStatus === 'pending_verification' || rawStatus === 'pending_approval' || rawStatus === 'verification_expired';
                             if (isPendingReview || rawStatus === 'rejected') {
                               const awaitingKyc = rawStatus === 'pending_verification';
+                              const isExpired = rawStatus === 'verification_expired';
+                              const daysRemaining = villa.verificationDeadline
+                                ? Math.max(0, Math.ceil((new Date(villa.verificationDeadline).getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
+                                : 21;
+                              const remindersSent = villa.verificationRemindersSent || 0;
+                              const isReminding = remindingVillaId === String(villa.id || (villa as any).villaId);
                               return (
                                 <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.8, alignItems: 'flex-start' }}>
                                   <Box
@@ -2735,9 +2815,66 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                                         color: rawStatus === 'rejected' ? '#B91C1C' : awaitingKyc ? '#92400E' : '#1D4ED8',
                                       }}
                                     >
-                                      {rawStatus === 'rejected' ? 'Rejected' : awaitingKyc ? 'Awaiting host ID' : 'Pending review'}
+                                      {rawStatus === 'rejected' ? 'Rejected' : isExpired ? 'Window Expired' : awaitingKyc ? 'Awaiting host ID' : 'Pending review'}
                                     </Typography>
                                   </Box>
+                                  {awaitingKyc && (
+                                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, mt: 0.2 }}>
+                                      <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, px: 0.8, py: 0.2, borderRadius: '6px', backgroundColor: daysRemaining <= 3 ? '#FEE2E2' : '#FEF3C7', color: daysRemaining <= 3 ? '#B91C1C' : '#92400E', fontSize: '10.5px', fontWeight: 700 }}>
+                                        ⏳ {daysRemaining} days left (21d)
+                                      </Box>
+                                      <Typography sx={{ fontSize: '10.5px', color: '#64748B' }}>
+                                        {remindersSent > 0 ? `${remindersSent} reminder${remindersSent > 1 ? 's' : ''} sent (every 2d)` : 'Every 2 days reminder active'}
+                                      </Typography>
+                                      <Button
+                                        size="small"
+                                        variant="outlined"
+                                        disabled={isReminding}
+                                        onClick={() => handleSendVerificationReminder(villa)}
+                                        startIcon={isReminding ? <CircularProgress size={11} color="inherit" /> : <Email sx={{ fontSize: 13 }} />}
+                                        sx={{
+                                          fontSize: '10.5px',
+                                          fontWeight: 700,
+                                          textTransform: 'none',
+                                          py: 0.2,
+                                          px: 1,
+                                          borderRadius: '6px',
+                                          color: '#004B8C',
+                                          borderColor: '#BAE0FF',
+                                          backgroundColor: '#F0F7FF',
+                                          '&:hover': { backgroundColor: '#E0F2FE' },
+                                        }}
+                                      >
+                                        {isReminding ? 'Sending...' : remindersSent > 0 ? `Remind (${remindersSent})` : 'Remind Host'}
+                                      </Button>
+                                    </Box>
+                                  )}
+                                  {isExpired && (
+                                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, mt: 0.2 }}>
+                                      <Typography sx={{ fontSize: '11px', color: '#B91C1C', fontWeight: 600 }}>
+                                        21 days elapsed without verification.
+                                      </Typography>
+                                      <Button
+                                        size="small"
+                                        variant="outlined"
+                                        disabled={isReminding}
+                                        onClick={() => handleSendVerificationReminder(villa)}
+                                        sx={{
+                                          fontSize: '10.5px',
+                                          fontWeight: 700,
+                                          textTransform: 'none',
+                                          py: 0.2,
+                                          px: 1,
+                                          borderRadius: '6px',
+                                          color: '#B91C1C',
+                                          borderColor: '#FCA5A5',
+                                          backgroundColor: '#FEF2F2',
+                                        }}
+                                      >
+                                        {isReminding ? 'Sending...' : 'Send Reactivation Link'}
+                                      </Button>
+                                    </Box>
+                                  )}
                                   {rawStatus === 'rejected' && villa.reviewNote && (
                                     <Typography sx={{ fontSize: '11px', color: '#B91C1C', maxWidth: 190 }}>
                                       {villa.reviewNote}
