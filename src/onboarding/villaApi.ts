@@ -77,6 +77,9 @@ export const villaAPI = {
   updateVilla: (villaId: string, data: any) => apiRequest(ENDPOINTS.BY_ID(villaId), 'PUT', data),
   deleteVilla: (villaId: string) => apiRequest(ENDPOINTS.BY_ID(villaId), 'DELETE'),
   uploadImage: (image: string) => apiRequest(ENDPOINTS.UPLOAD_IMAGE, 'POST', { image }),
+  // Onboarding admins approve or reject a host's listing (approve requires host identity verification)
+  reviewVilla: (villaId: string, decision: 'approve' | 'reject', note?: string) =>
+    apiRequest(`${ENDPOINTS.BY_ID(villaId)}/review`, 'POST', { decision, note }),
   bulkUpdateStatus: (status: 'active' | 'inactive' | 'blocked', villaIds?: string[]) =>
     apiRequest(ENDPOINTS.BULK_STATUS, 'POST', { status, villaIds }),
 }

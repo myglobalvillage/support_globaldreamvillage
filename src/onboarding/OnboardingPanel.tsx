@@ -162,6 +162,41 @@ const persistBulkStatusOverrides = (villaIds: string[], status: string) => {
   } catch {}
 };
 
+// Onboarding lifecycle states are owned by the server (host KYC -> admin approval)
+const ONBOARDING_REVIEW_STATUSES = ['pending_verification', 'pending_approval', 'rejected'];
+const isInOnboardingReview = (status?: string) =>
+  ONBOARDING_REVIEW_STATUSES.includes(String(status || '').toLowerCase());
+
+const clearStatusOverride = (villaId: string) => {
+  const targetId = String(villaId);
+  try {
+    const overrides = getStoredStatusOverrides();
+    delete overrides[targetId];
+    localStorage.setItem(STATUS_OVERRIDES_KEY, JSON.stringify(overrides));
+  } catch {}
+  try {
+    const raw = localStorage.getItem(CUSTOM_VILLAS_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      localStorage.setItem(
+        CUSTOM_VILLAS_KEY,
+        JSON.stringify(
+          parsed.map((item: any) => {
+            if (String(item?.id || item?.villaId || item?.villaid) !== targetId) return item;
+            const { status: _drop, ...rest } = item;
+            return rest;
+          })
+        )
+      );
+    } else if (parsed && typeof parsed === 'object' && parsed[targetId]) {
+      const { status: _drop, ...rest } = parsed[targetId];
+      parsed[targetId] = rest;
+      localStorage.setItem(CUSTOM_VILLAS_KEY, JSON.stringify(parsed));
+    }
+  } catch {}
+};
+
 const PROPERTY_TYPES = [
   { value: 'all', label: 'All Types' },
   { value: 'villa', label: 'Villa' },
@@ -178,13 +213,20 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
   const [error, setError] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedType, setSelectedType] = useState('all');
-  const [selectedStatusFilter, setSelectedStatusFilter] = useState<'all' | 'active' | 'inactive' | 'blocked'>('all');
+  const [selectedStatusFilter, setSelectedStatusFilter] = useState<'all' | 'pending' | 'active' | 'inactive' | 'blocked' | 'rejected'>('all');
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [statusUpdatingId, setStatusUpdatingId] = useState<string | null>(null);
   const [blockDialogOpen, setBlockDialogOpen] = useState(false);
   const [blockingVilla, setBlockingVilla] = useState<Villa | null>(null);
   const [blockReason, setBlockReason] = useState('');
   const [viewOwnerVilla, setViewOwnerVilla] = useState<Villa | null>(null);
+  const [reviewDialog, setReviewDialog] = useState<{
+    open: boolean;
+    villa: Villa | null;
+    decision: 'approve' | 'reject';
+    note: string;
+  }>({ open: false, villa: null, decision: 'approve', note: '' });
+  const [reviewing, setReviewing] = useState(false);
   const [bulkUpdating, setBulkUpdating] = useState(false);
   const [bulkTargetStatus, setBulkTargetStatus] = useState<'active' | 'inactive' | null>(null);
   const [bulkConfirmDialog, setBulkConfirmDialog] = useState<{
@@ -322,7 +364,9 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
           // 2. Custom entry status if set
           // 3. Backend status
           let effectiveStatus = (v.status || '').toLowerCase();
-          if (statusOverrides[rawId]) {
+          if (isInOnboardingReview(effectiveStatus)) {
+            // Server-driven onboarding state always wins over cached local overrides
+          } else if (statusOverrides[rawId]) {
             effectiveStatus = statusOverrides[rawId];
           } else if (customEntry.status) {
             effectiveStatus = customEntry.status;
@@ -964,6 +1008,43 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
     }
   };
 
+  // Onboarding review: approve (publishes the listing) or reject (with a note for the host)
+  const handleOpenReview = (villa: Villa, decision: 'approve' | 'reject') => {
+    setReviewDialog({ open: true, villa, decision, note: '' });
+  };
+
+  const handleConfirmReview = async () => {
+    const { villa, decision, note } = reviewDialog;
+    if (!villa) return;
+    const targetId = String(villa.id || (villa as any).villaId || (villa as any).villaid);
+    if (decision === 'reject' && !note.trim()) return;
+    setReviewing(true);
+    try {
+      const res = await villaAPI.reviewVilla(targetId, decision, note.trim());
+      const nextStatus = String(res?.data?.status || (decision === 'approve' ? 'active' : 'rejected'));
+      clearStatusOverride(targetId);
+      setVillas((prev) =>
+        prev.map((v) =>
+          String(v.id || (v as any).villaId || (v as any).villaid) === targetId
+            ? { ...v, status: nextStatus, isApproved: nextStatus === 'active', reviewNote: note.trim() || null }
+            : v
+        )
+      );
+      setReviewDialog({ open: false, villa: null, decision: 'approve', note: '' });
+      setToastSnackbar({
+        open: true,
+        message: decision === 'approve' ? 'Listing approved and published.' : 'Listing rejected. The host has been notified.',
+        severity: 'success',
+      });
+    } catch (err: any) {
+      console.error(err);
+      setToastSnackbar({ open: true, message: err?.message || 'Could not save the review decision', severity: 'error' });
+    } finally {
+      setReviewing(false);
+      fetchVillas(false);
+    }
+  };
+
   // Bulk status controls: Make All Active / Make All Inactive
   const handleOpenBulkConfirm = (targetStatus: 'active' | 'inactive') => {
     if (villas.length === 0) return;
@@ -973,14 +1054,14 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
         open: true,
         targetStatus: 'active',
         title: 'Make All Properties Active',
-        message: `Set all ${villas.length} properties to Active? All properties will become immediately visible and bookable by guests on globaldreamvillage.com.`,
+        message: `Set all ${villas.filter((v) => !isInOnboardingReview(v.status)).length} reviewed properties to Active? Listings still awaiting review are not affected. All properties will become immediately visible and bookable by guests on globaldreamvillage.com.`,
       });
     } else {
       setBulkConfirmDialog({
         open: true,
         targetStatus: 'inactive',
         title: 'Make All Properties Inactive',
-        message: `Set all ${villas.length} properties to Inactive? All properties will be hidden from guests on globaldreamvillage.com until reactivated.`,
+        message: `Set all ${villas.filter((v) => !isInOnboardingReview(v.status)).length} reviewed properties to Inactive? Listings still awaiting review are not affected. All properties will be hidden from guests on globaldreamvillage.com until reactivated.`,
       });
     }
   };
@@ -991,10 +1072,13 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
     setBulkUpdating(true);
     setBulkTargetStatus(targetStatus);
 
-    const allIds = villas.map((v) => String(v.id || (v as any).villaId || (v as any).villaid));
+    // Listings in onboarding review are only changed through approve / reject
+    const allIds = villas
+      .filter((v) => !isInOnboardingReview(v.status))
+      .map((v) => String(v.id || (v as any).villaId || (v as any).villaid));
 
-    // Optimistic update across all listings
-    setVillas((prev) => prev.map((v) => ({ ...v, status: targetStatus })));
+    // Optimistic update across reviewed listings
+    setVillas((prev) => prev.map((v) => (isInOnboardingReview(v.status) ? v : { ...v, status: targetStatus })));
     persistBulkStatusOverrides(allIds, targetStatus);
 
     try {
@@ -1054,7 +1138,10 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
       (v.type || 'villa').toLowerCase() === selectedType.toLowerCase();
 
     const matchesStatus =
-      selectedStatusFilter === 'all' || vStatus === selectedStatusFilter;
+      selectedStatusFilter === 'all' ||
+      (selectedStatusFilter === 'pending'
+        ? vStatus === 'pending_verification' || vStatus === 'pending_approval'
+        : vStatus === selectedStatusFilter);
 
     return matchesSearch && matchesType && matchesStatus;
   });
@@ -1064,6 +1151,11 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
   const activeCount = villas.filter((v) => String(v.status || 'active').toLowerCase() === 'active').length;
   const inactiveCount = villas.filter((v) => String(v.status || '').toLowerCase() === 'inactive').length;
   const blockedCount = villas.filter((v) => String(v.status || '').toLowerCase() === 'blocked').length;
+  const pendingCount = villas.filter((v) => {
+    const s = String(v.status || '').toLowerCase();
+    return s === 'pending_verification' || s === 'pending_approval';
+  }).length;
+  const rejectedCount = villas.filter((v) => String(v.status || '').toLowerCase() === 'rejected').length;
   const uniqueCities = new Set(
     villas.map((v) => v.city || v.location?.split(',')[0]?.trim()).filter(Boolean)
   ).size;
@@ -1513,6 +1605,23 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                 </Button>
                 <Button
                   size="small"
+                  onClick={() => setSelectedStatusFilter('pending')}
+                  sx={{
+                    px: 1.4,
+                    py: 0.4,
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    textTransform: 'none',
+                    borderRadius: '8px',
+                    backgroundColor: selectedStatusFilter === 'pending' ? '#D97706' : 'transparent',
+                    color: selectedStatusFilter === 'pending' ? '#FFFFFF' : '#B45309',
+                    '&:hover': { backgroundColor: selectedStatusFilter === 'pending' ? '#B45309' : '#E2E8F0' },
+                  }}
+                >
+                  Pending review ({pendingCount})
+                </Button>
+                <Button
+                  size="small"
                   onClick={() => setSelectedStatusFilter('active')}
                   sx={{
                     px: 1.4,
@@ -1561,6 +1670,23 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                   }}
                 >
                   Blocked ({blockedCount})
+                </Button>
+                <Button
+                  size="small"
+                  onClick={() => setSelectedStatusFilter('rejected')}
+                  sx={{
+                    px: 1.4,
+                    py: 0.4,
+                    fontSize: '12px',
+                    fontWeight: 700,
+                    textTransform: 'none',
+                    borderRadius: '8px',
+                    backgroundColor: selectedStatusFilter === 'rejected' ? '#9F1239' : 'transparent',
+                    color: selectedStatusFilter === 'rejected' ? '#FFFFFF' : '#9F1239',
+                    '&:hover': { backgroundColor: selectedStatusFilter === 'rejected' ? '#881337' : '#E2E8F0' },
+                  }}
+                >
+                  Rejected ({rejectedCount})
                 </Button>
               </Box>
 
@@ -1948,6 +2074,32 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                                 </Box>
                               </Box>
 
+                              {/* Host identity (KYC) status for onboarding review */}
+                              {villa.host && villa.host.identityVerified !== undefined && (
+                                <Tooltip
+                                  title={
+                                    villa.host.identityVerified && villa.host.identityVerification
+                                      ? `${(villa.host.identityVerification.documentType || 'ID').replace('_', ' ').toUpperCase()} ${villa.host.identityVerification.maskedIdNumber || ''}${typeof villa.host.identityVerification.facialMatchScore === 'number' ? ` · ${villa.host.identityVerification.facialMatchScore}% face match` : ''}`
+                                      : 'Host has not completed identity verification'
+                                  }
+                                >
+                                  <Chip
+                                    size="small"
+                                    icon={villa.host.identityVerified ? <VerifiedUser sx={{ fontSize: '13px !important', color: '#16A34A !important' }} /> : <WarningAmberRounded sx={{ fontSize: '13px !important', color: '#D97706 !important' }} />}
+                                    label={villa.host.identityVerified ? 'ID verified' : 'ID not verified'}
+                                    sx={{
+                                      alignSelf: 'flex-start',
+                                      mt: 0.4,
+                                      height: 20,
+                                      fontSize: '10.5px',
+                                      fontWeight: 700,
+                                      backgroundColor: villa.host.identityVerified ? '#DCFCE7' : '#FEF3C7',
+                                      color: villa.host.identityVerified ? '#166534' : '#92400E',
+                                    }}
+                                  />
+                                </Tooltip>
+                              )}
+
                               {/* Owner Contact (Email & Phone) */}
                               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.3, mt: 0.2 }}>
                                 {villa.host?.email && (
@@ -2064,6 +2216,67 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
                             const isActive = rawStatus === 'active';
                             const isBlocked = rawStatus === 'blocked';
                             const isUpdating = statusUpdatingId === String(villa.id || (villa as any).villaId);
+
+                            // Onboarding states are driven by the server: show the review actions instead of the toggle
+                            const isPendingReview = rawStatus === 'pending_verification' || rawStatus === 'pending_approval';
+                            if (isPendingReview || rawStatus === 'rejected') {
+                              const awaitingKyc = rawStatus === 'pending_verification';
+                              return (
+                                <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.8, alignItems: 'flex-start' }}>
+                                  <Box
+                                    sx={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      px: 1.2,
+                                      py: 0.4,
+                                      borderRadius: '999px',
+                                      backgroundColor: rawStatus === 'rejected' ? '#FEF2F2' : awaitingKyc ? '#FFFBEB' : '#EFF6FF',
+                                      border: `1px solid ${rawStatus === 'rejected' ? '#FCA5A5' : awaitingKyc ? '#FDE68A' : '#BFDBFE'}`,
+                                    }}
+                                  >
+                                    <Typography
+                                      sx={{
+                                        fontSize: '11.5px',
+                                        fontWeight: 700,
+                                        letterSpacing: '0.3px',
+                                        textTransform: 'uppercase',
+                                        color: rawStatus === 'rejected' ? '#B91C1C' : awaitingKyc ? '#92400E' : '#1D4ED8',
+                                      }}
+                                    >
+                                      {rawStatus === 'rejected' ? 'Rejected' : awaitingKyc ? 'Awaiting host ID' : 'Pending review'}
+                                    </Typography>
+                                  </Box>
+                                  {rawStatus === 'rejected' && villa.reviewNote && (
+                                    <Typography sx={{ fontSize: '11px', color: '#B91C1C', maxWidth: 190 }}>
+                                      {villa.reviewNote}
+                                    </Typography>
+                                  )}
+                                  {rawStatus === 'rejected' ? (
+                                    <Typography sx={{ fontSize: '11px', color: '#64748B' }}>
+                                      Returns here when the host edits and resubmits.
+                                    </Typography>
+                                  ) : (
+                                    <Box sx={{ display: 'flex', gap: 0.8 }}>
+                                      <Button
+                                        size="small"
+                                        variant="contained"
+                                        onClick={() => handleOpenReview(villa, 'approve')}
+                                        sx={{ fontSize: '11px', fontWeight: 700, textTransform: 'none', py: 0.2, px: 1.2, borderRadius: '8px', backgroundColor: '#16A34A', '&:hover': { backgroundColor: '#15803D' } }}
+                                      >
+                                        Review &amp; approve
+                                      </Button>
+                                      <Button
+                                        size="small"
+                                        onClick={() => handleOpenReview(villa, 'reject')}
+                                        sx={{ fontSize: '11px', fontWeight: 700, textTransform: 'none', py: 0.2, px: 1, borderRadius: '8px', color: '#DC2626', '&:hover': { backgroundColor: '#FEE2E2' } }}
+                                      >
+                                        Reject
+                                      </Button>
+                                    </Box>
+                                  )}
+                                </Box>
+                              );
+                            }
 
                             return (
                               <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.8, alignItems: 'flex-start' }}>
@@ -3638,6 +3851,97 @@ export const OnboardingPanel: React.FC<AdminPanelProps> = ({ onBack }) => {
             {String(blockingVilla?.status || '').toLowerCase() === 'blocked' ? 'Confirm Unblock' : 'Confirm Block'}
           </Button>
         </DialogActions>
+      </Dialog>
+
+      {/* Onboarding Review (Approve / Reject) Dialog */}
+      <Dialog
+        open={reviewDialog.open}
+        onClose={() => !reviewing && setReviewDialog((prev) => ({ ...prev, open: false }))}
+        PaperProps={{ sx: { borderRadius: '16px', p: 1, maxWidth: '520px', width: '100%' } }}
+      >
+        {(() => {
+          const rv = reviewDialog.villa;
+          const kyc = rv?.host?.identityVerification;
+          const hostVerified = !!rv?.host?.identityVerified;
+          const isApprove = reviewDialog.decision === 'approve';
+          const hostLabel =
+            rv?.host?.name ||
+            (rv?.host?.firstName ? `${rv.host.firstName} ${rv.host.lastName || ''}`.trim() : `Host #${rv?.hostId || ''}`);
+          const approveBlocked = isApprove && !hostVerified;
+          const rejectMissingNote = !isApprove && !reviewDialog.note.trim();
+          return (
+            <>
+              <DialogTitle sx={{ fontWeight: 800, fontSize: '18px', fontFamily: "'Poppins', sans-serif" }}>
+                {isApprove ? 'Approve listing' : 'Reject listing'}
+              </DialogTitle>
+              <DialogContent>
+                <Typography sx={{ fontWeight: 700, fontSize: '14px', color: '#0F172A' }}>
+                  {rv?.title || rv?.name}
+                </Typography>
+                <Typography sx={{ fontSize: '12.5px', color: '#64748B', mb: 1.5 }}>
+                  {rv?.location} · Host: {hostLabel}
+                </Typography>
+
+                <Box
+                  sx={{
+                    p: 1.5,
+                    mb: 2,
+                    borderRadius: '12px',
+                    border: `1px solid ${hostVerified ? '#BBF7D0' : '#FDE68A'}`,
+                    backgroundColor: hostVerified ? '#F0FDF4' : '#FFFBEB',
+                  }}
+                >
+                  <Typography sx={{ fontWeight: 800, fontSize: '12.5px', color: hostVerified ? '#166534' : '#92400E' }}>
+                    {hostVerified ? 'Host identity verified' : 'Host identity NOT verified'}
+                  </Typography>
+                  {hostVerified && kyc ? (
+                    <Typography sx={{ fontSize: '12px', color: '#475569', mt: 0.4 }}>
+                      {(kyc.documentType || 'ID').replace('_', ' ').toUpperCase()} · {kyc.maskedIdNumber || 'n/a'}
+                      {typeof kyc.facialMatchScore === 'number' ? ` · ${kyc.facialMatchScore}% face match` : ''}
+                      {kyc.verifiedAt ? ` · ${new Date(kyc.verifiedAt).toLocaleDateString()}` : ''}
+                    </Typography>
+                  ) : (
+                    <Typography sx={{ fontSize: '12px', color: '#92400E', mt: 0.4 }}>
+                      The host must complete identity verification before this listing can be approved.
+                    </Typography>
+                  )}
+                </Box>
+
+                <TextField
+                  fullWidth
+                  multiline
+                  minRows={3}
+                  label={isApprove ? 'Note to host (optional)' : 'Reason for rejection (required, shown to host)'}
+                  value={reviewDialog.note}
+                  onChange={(e) => setReviewDialog((prev) => ({ ...prev, note: e.target.value }))}
+                  disabled={reviewing}
+                />
+              </DialogContent>
+              <DialogActions sx={{ px: 3, pb: 2.5 }}>
+                <Button
+                  onClick={() => setReviewDialog((prev) => ({ ...prev, open: false }))}
+                  disabled={reviewing}
+                  sx={{ textTransform: 'none', color: '#64748B', fontWeight: 600 }}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  variant="contained"
+                  onClick={handleConfirmReview}
+                  disabled={reviewing || approveBlocked || rejectMissingNote}
+                  sx={{
+                    textTransform: 'none',
+                    fontWeight: 700,
+                    backgroundColor: isApprove ? '#16A34A' : '#DC2626',
+                    '&:hover': { backgroundColor: isApprove ? '#15803D' : '#B91C1C' },
+                  }}
+                >
+                  {reviewing ? 'Saving...' : isApprove ? 'Approve & publish' : 'Reject listing'}
+                </Button>
+              </DialogActions>
+            </>
+          );
+        })()}
       </Dialog>
 
       {/* Admin Bulk Status Confirmation Dialog */}

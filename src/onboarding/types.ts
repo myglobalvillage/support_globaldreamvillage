@@ -39,6 +39,9 @@ export interface Villa {
   status?: 'active' | 'inactive' | 'blocked' | string;
   isApproved?: boolean;
   isapproved?: boolean;
+  reviewNote?: string | null;
+  reviewedBy?: string | null;
+  reviewedAt?: string | null;
   host?: {
     userId?: string;
     id?: string;
@@ -52,6 +55,17 @@ export interface Villa {
     bio?: string;
     isSuperhost?: boolean;
     isIdentityVerified?: boolean;
+    identityVerified?: boolean;
+    identityVerification?: {
+      verificationId?: string | null;
+      status?: string;
+      provider?: string | null;
+      documentType?: string | null;
+      country?: string | null;
+      maskedIdNumber?: string | null;
+      facialMatchScore?: number | null;
+      verifiedAt?: string | null;
+    } | null;
     hostingDuration?: string;
     responseRate?: string;
     responseTime?: string;
